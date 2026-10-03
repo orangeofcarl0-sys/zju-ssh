@@ -1,6 +1,6 @@
 # zju-ssh
 
-> v1.4.1 · [MIT License](LICENSE) · Windows GUI+CLI / macOS+Linux CLI
+> v1.4.2 · [MIT License](LICENSE) · Windows GUI+CLI / macOS+Linux CLI
 
 **ZJU SSH 助手** —— 让"任何网络下 `ssh 浙大校园网工作站`"变成一条零配置的命令。
 **整个工具围绕 [zju-connect](https://github.com/Mythologyli/zju-connect)（aTrust 协议开源客户端）构建，专为浙江大学校园网打造**：
@@ -91,13 +91,16 @@ ssh zju
 
 | 字段 | 默认值 | 说明 |
 |---|---|---|
-| sshHost | —（必填） | 工作站地址（init 询问 / GUI 高级区填写） |
+| sshHost | —（必填） | 工作站地址（init 询问 / GUI 设置页填写） |
 | sshPort | 22 | 工作站 SSH 端口 |
 | hostAlias | zju | ssh 配置里的 Host 别名 |
 | server / zjuPort | rvpn.zju.edu.cn / 443 | aTrust/RVPN 服务器（按学校修改） |
 | zjuRepo | Mythologyli/zju-connect | 隧道内核的下载与版本检查仓库 |
+| zjuChannel | nightly | 内核通道：nightly=上游持续构建，含 aTrust 二次认证（RADIUS 质询）等最新修复；stable=正式 release |
 | mode | tun | tun / socks |
 | sshUser / vpnUser / vpnPassword | — | 账户与凭据（密码 DPAPI 加密存储） |
+
+**认证挑战（动态口令/短信验证码/图形码）**：内核在登录遇到二次认证时，挑战消息会实时出现在 GUI 日志中，同时任务栏会出现一个最小化的 `zju-tunnel` 控制台——点开它输入口令回车即可完成认证（GUI 日志负责"看"，控制台负责"输"）。
 
 CLI 通过 `init -SshHost -SshPort -HostAlias -Server -ZjuPort -ZjuRepo` 传参；旧配置缺字段自动回落默认值。
 

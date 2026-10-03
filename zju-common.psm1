@@ -3,7 +3,7 @@
 # schemaVersion=2：工作站地址/端口/别名/RVPN 服务器等全部可配，缺失字段回落默认值，
 # 因此 v1 老配置无需迁移即可用。
 
-$script:ToolVersion = '1.4.1'
+$script:ToolVersion = '1.4.2'
 
 function Get-ToolVersion { return $script:ToolVersion }
 
@@ -12,14 +12,15 @@ $script:SocksHost = '127.0.0.1'
 $script:SocksPort = 1080
 # 注意：sshHost（工作站地址）没有默认值——必须由使用者在 init/界面/配置中提供
 $script:Defaults = @{
-    sshPort   = 22
-    hostAlias = 'zju'
-    server    = 'rvpn.zju.edu.cn'
-    zjuPort   = 443
-    zjuRepo   = 'Mythologyli/zju-connect'
-    idFile    = '~/.ssh/id_ed25519'
+    sshPort    = 22
+    hostAlias  = 'zju'
+    server     = 'rvpn.zju.edu.cn'
+    zjuPort    = 443
+    zjuRepo    = 'Mythologyli/zju-connect'
+    idFile     = '~/.ssh/id_ed25519'
 
-    theme     = 'dark'
+    theme      = 'dark'
+    zjuChannel = 'nightly'   # nightly 含 aTrust 二次认证等修复；stable=正式 release
 }
 
 function Write-Ok([string]$msg)    { Write-Host "[✓] $msg" }

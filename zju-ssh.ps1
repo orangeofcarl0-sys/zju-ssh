@@ -87,15 +87,24 @@ function Install-ZjuConnect {
     New-Item -ItemType Directory -Force -Path $bin | Out-Null
     # 下载链零 API 依赖：GitHub releases permalink 直链 + 国内镜像回退。
     # 原实现先查 api.github.com（未认证 60 次/小时，校园网出口是全组共享 IP，配额必然撞 403），且直链常被墙——双坑都已实测。
+    # 内核通道 zjuChannel：nightly（默认）= 上游持续构建、含 aTrust 二次认证（RADIUS Access-Challenge）等修复；
+    # stable = 正式 release。学校 aTrust 当前需要二次认证支持，故默认 nightly；nightly 全链失败再退 stable。
     $repo = if ($ZjuRepo) { $ZjuRepo } else { 'Mythologyli/zju-connect' }
+    $channel = Get-CfgValue -Cfg (Get-Cfg) -Key 'zjuChannel'
+    if ($channel -ne 'stable') { $channel = 'nightly' }
     $asset = 'zju-connect-windows-amd64.zip'
-    $direct = "https://github.com/$repo/releases/latest/download/$asset"
-    $mirrors = @('https://ghproxy.cn/', 'https://gh-proxy.com/')
+    $paths = if ($channel -eq 'nightly') { @("releases/download/nightly/$asset", "releases/latest/download/$asset") }
+             else { @("releases/latest/download/$asset") }
+    $urls = @()
+    foreach ($p in $paths) { foreach ($b in @('https://github.com/', 'https://ghproxy.cn/', 'https://gh-proxy.com/')) { $urls += ($b + "github.com/$repo/$p") } }
+    $urls = @($urls | Select-Object -Unique)
     $zip = Join-Path $env:TEMP $asset
     $ok = $false
-    foreach ($u in (@($direct) + ($mirrors | ForEach-Object { $_ + $direct }))) {
-        $src = if ($u -match '^https://github\.com') { 'GitHub 直链' } else { ($u -split '/')[2] + ' 镜像' }
-        Write-Host ("[init] 下载 zju-connect（{0}）..." -f $src)
+    foreach ($u in $urls) {
+        $src = if ($u -notmatch '^https://github\.com') { ($u -split '/')[2] + ' 镜像' }
+               elseif ($u -match '/download/nightly/') { 'GitHub nightly' }
+               else { 'GitHub stable' }
+        Write-Host ("[init] 下载 zju-connect（{0}，通道 {1}）..." -f $src, $channel)
         try {
             Invoke-WebRequest -Uri $u -OutFile $zip -TimeoutSec 120 -UseBasicParsing
             if ((Get-Item $zip).Length -gt 1MB) { Write-Ok ("下载成功（" + $src + "）"); $ok = $true; break }
@@ -258,11 +267,13 @@ function Invoke-Up {
         if (Wait-ZjuReady { Get-ZjuProc }) { Write-Ok 'zju-connect 已运行（TUN）'; return }
         throw '[up] 启动超时——看上方 zju-connect 日志定位（账号/密码/验证码/协议），或运行 doctor'
     }
+    # SOCKS 也走最小化可交互控制台：认证挑战（短信/动态口令/图形码）的消息会实时进 GUI 日志，
+    # 用户点开任务栏 "zju-tunnel" 窗口输入即可；WindowStyle Hidden 的无 stdin 子进程会在挑战时挂死
     $zcArgs = Get-ZcArgs $false
-    $p = Start-Process -FilePath $zc -ArgumentList $zcArgs -WindowStyle Hidden `
-            -RedirectStandardOutput (Join-Path $logsDir 'zju-out.log') `
-            -RedirectStandardError  (Join-Path $logsDir 'zju-err.log') -PassThru
-    Set-Content -Path (Join-Path $bin 'zju.pid') -Value $p.Id
+    $outLog = Join-Path $logsDir 'zju-out.log'
+    $runCmd = Join-Path $env:TEMP ('zju-socks-' + [guid]::NewGuid().ToString('N').Substring(0, 8) + '.cmd')
+    Set-Content -Path $runCmd -Value ('"' + $zc + '" ' + ($zcArgs -join ' ') + ' > "' + $outLog + '" 2>&1' + "`r`nexit /b 0") -Encoding ASCII
+    Start-Process -FilePath $env:ComSpec -ArgumentList ('/c "' + $runCmd + '"') -WindowStyle Minimized
     Write-Host '[up] 等待 SOCKS5 就绪（最多 60s，下方实时转发 zju-connect 日志）...'
     if (Wait-ZjuReady { Test-SocksReady }) { Write-Ok 'SOCKS5 127.0.0.1:1080 就绪'; return }
     throw '[up] 启动超时——看上方 zju-connect 日志定位（账号/密码/验证码/协议变更），或看 logs\zju-err.log'
@@ -328,7 +339,6 @@ function Invoke-Down {
             else { Write-Ok 'zju-connect 已停止（提权）' }
         }
     } else { Write-Host '[down] zju-connect 未在运行' }
-    Remove-Item (Join-Path $bin 'zju.pid') -ErrorAction SilentlyContinue
 }
 
 function Invoke-Doctor {
