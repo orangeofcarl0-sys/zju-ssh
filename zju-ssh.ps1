@@ -226,10 +226,17 @@ function Invoke-Up {
     if (-not (Test-Path $zc)) { throw ("缺少 " + $zc + " —— 自动下载失败（多为当前网络到 GitHub 不通）：回校园网重试，或手动下载放入 bin\") }
     New-Item -ItemType Directory -Force -Path $logsDir | Out-Null
     if ($cfg.mode -eq 'tun') {
-        schtasks /query /tn $taskName *> $null
-        if ($LASTEXITCODE -ne 0) { throw 'TUN 模式需要管理员权限：先运行 install-task 注册一次开机自启任务（一次 UAC）' }
+        # 任务存在性检查不要用 schtasks /query：EA=Stop 下其 stderr 会升级为终止错误（NativeCommandError），
+        # 下面的友好提示永远没机会显示；Get-ScheduledTask 无任务时安静返回 null
+        if (-not (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue)) {
+            throw 'TUN 模式需要先注册开机自启任务：点一次“开机自动启动校外隧道”开关（一次 UAC），或命令行运行 install-task'
+        }
         Write-Host '[up] 通过计划任务启动 TUN 隧道...'
+        $prevEa = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
         schtasks /run /tn $taskName | Out-Null
+        $runOk = ($LASTEXITCODE -eq 0)
+        $ErrorActionPreference = $prevEa
+        if (-not $runOk) { throw '[up] 计划任务启动失败（schtasks /run）——重跑 install-task 注册或运行 doctor 排查' }
         $deadline = (Get-Date).AddSeconds(60)
         while ((Get-Date) -lt $deadline) {
             if (Get-ZjuProc) { Write-Ok 'zju-connect 已运行（TUN）'; return }
