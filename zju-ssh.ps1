@@ -20,6 +20,9 @@ param(
     [switch]$NoDownload
 )
 
+# 注意：$PSBoundParameters 在函数内指函数自己的绑定（恒空），必须在脚本作用域先记录
+$script:VpnUserPassed = $PSBoundParameters.ContainsKey('VpnUser')
+
 $ErrorActionPreference = 'Stop'
 $toolDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 Import-Module (Join-Path $toolDir 'zju-common.psm1') -Force -DisableNameChecking
@@ -77,7 +80,7 @@ function Build-Sshpipe {
 # ---- init 子步骤 2：下载 zju-connect（返回版本号，失败返回 ''）----
 function Install-ZjuConnect {
     if (Test-Path $zc) { Write-Ok 'zju-connect 已存在'; return (Get-Cfg).zjuVersion }
-    if ($NoDownload) { Write-Warn2 '跳过下载；请手动下载 zju-connect windows-amd64 zip 解压放入 bin\'; return (Get-Cfg).zjuVersion }
+    if ($NoDownload) { Write-Ok '按需跳过下载：首次“一键连接（up）”时会自动下载，也可手动下载放入 bin\'; return (Get-Cfg).zjuVersion }
     $repo = if ($ZjuRepo) { $ZjuRepo } else { 'Mythologyli/zju-connect' }
     Write-Host "[init] 从 GitHub（$repo）下载 zju-connect 最新版..."
     try {
@@ -85,7 +88,7 @@ function Install-ZjuConnect {
         $asset = $rel.assets | Where-Object { $_.name -match 'windows-(amd64|x86_64)\.zip$' } | Select-Object -First 1
         if (-not $asset) { throw '未找到 windows 资产' }
         $zip = Join-Path $env:TEMP $asset.name
-        Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $zip -TimeoutSec 600
+        Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $zip -TimeoutSec 90
         Expand-Archive -Path $zip -DestinationPath (Join-Path $env:TEMP 'zjc-extract') -Force
         $exe = Get-ChildItem (Join-Path $env:TEMP 'zjc-extract') -Recurse -Filter 'zju-connect*.exe' | Select-Object -First 1
         if (-not $exe) { throw '压缩包中未找到 zju-connect*.exe' }
@@ -94,7 +97,7 @@ function Install-ZjuConnect {
         Write-Ok ("已下载 " + $rel.tag_name)
         return $rel.tag_name
     } catch {
-        Write-Warn2 ("自动下载失败（" + $_.Exception.Message + "）——可稍后重跑 init 或手动下载放入 bin\")
+        Write-Warn2 ("自动下载失败（" + $_.Exception.Message + "）——多为当前网络到 GitHub 不通：校园网内重试会自动下载，或手动下载放入 bin\")
         return ''
     }
 }
@@ -128,18 +131,30 @@ function Write-SshConfig([string]$Mode, [string]$SshUser, [hashtable]$t) {
     Write-Ok ("已写入 " + $sshConfigPath)
 }
 
+# GUI 子进程等无头场景没有可交互控制台，Read-Host 会永久挂起：带此包装时安全跳过（返回空走跳过分支）
+function Read-HostSafe([string]$msg) {
+    if ($env:ZJU_SSH_NONINTERACTIVE) { return '' }
+    return (Read-Host $msg)
+}
+function Read-HostSafeSecure([string]$msg) {
+    if ($env:ZJU_SSH_NONINTERACTIVE) { return $null }
+    $sec = Read-Host $msg -AsSecureString
+    $b = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($sec)
+    try { return [Runtime.InteropServices.Marshal]::PtrToStringAuto($b) } finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($b) }
+}
+
 function Invoke-Init {
     Write-Host ("=== zju-ssh init（模式: " + $Mode + "）===")
     if ($Mode -ne 'tun' -and $Mode -ne 'socks') { throw "Mode 必须为 tun 或 socks" }
     New-Item -ItemType Directory -Force -Path $bin | Out-Null
     if ($Mode -eq 'socks') { Build-Sshpipe }
-    $tag = Install-ZjuConnect
 
+    # 下载放到最后：先把配置落盘（GitHub 不通/下载失败不应丢掉用户输入的配置）
     $old = Get-Cfg
-    if (-not $SshHost) { $SshHost = Read-Host '工作站地址（必填，工作站的内网 IP 或主机名）' }
+    if (-not $SshHost) { $SshHost = Read-HostSafe '工作站地址（必填，工作站的内网 IP 或主机名）' }
     if (-not $SshHost -and $old) { $SshHost = [string]$old.sshHost }
     if (-not $SshHost) { throw '工作站地址不能为空（-SshHost 或交互输入）' }
-    if (-not $SshUser) { $SshUser = Read-Host 'ZJU 上的 SSH 账户名（管理员开通时告知）' }
+    if (-not $SshUser) { $SshUser = Read-HostSafe 'ZJU 上的 SSH 账户名（管理员开通时告知）' }
     if (-not $SshUser -and $old) { $SshUser = [string]$old.sshUser }
     if (-not $SshUser) { throw 'SSH 账户名不能为空' }
     # 密码可经环境变量传入（GUI 使用；避免出现在子进程命令行里），读取后立即清除
@@ -148,19 +163,15 @@ function Invoke-Init {
         Remove-Item Env:\ZJU_SSH_VPNPASS -ErrorAction SilentlyContinue
     }
     # -VpnUser 显式传空 = 明确跳过校外通道配置（无头场景）；未传时回落旧配置/交互输入
-    if (-not $PSBoundParameters.ContainsKey('VpnUser')) {
+    if (-not $script:VpnUserPassed) {
         if ($old -and $old.vpnUser) { $VpnUser = [string]$old.vpnUser }
-        else { $VpnUser = Read-Host '本人上网账号（学号/工号；回车=暂不配置校外通道）' }
+        else { $VpnUser = Read-HostSafe '本人上网账号（学号/工号；回车=暂不配置校外通道）' }
     }
     if ($VpnUser -and -not $VpnPassword) {
         if ($old -and $old.vpnPassword) { $VpnPassword = [string]$old.vpnPassword }
-        else {
-            $sec = Read-Host '上网密码（不回显）' -AsSecureString
-            $b = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($sec)
-            $VpnPassword = [Runtime.InteropServices.Marshal]::PtrToStringAuto($b)
-        }
+        else { $VpnPassword = Read-HostSafeSecure '上网密码（不回显）' }
     }
-    $zjuVersion = if ($tag) { $tag } elseif ($old) { [string]$old.zjuVersion } else { '' }
+    $zjuVersion = if ($old) { [string]$old.zjuVersion } else { '' }
     Save-ToolConfig -Cfg ([PSCustomObject]@{
         server = if ($Server) { $Server } else { Get-CfgValue -Cfg $old -Key 'server' }
         port = if ($ZjuPort -gt 0) { $ZjuPort } else { [int](Get-CfgValue -Cfg $old -Key 'zjuPort') }
@@ -169,8 +180,19 @@ function Invoke-Init {
         sshPort = if ($SshPort -gt 0) { $SshPort } else { [int](Get-CfgValue -Cfg $old -Key 'sshPort') }
         hostAlias = if ($HostAlias) { $HostAlias } else { Get-CfgValue -Cfg $old -Key 'hostAlias' }
         mode = $Mode; sshUser = $SshUser; zjuVersion = $zjuVersion
+        theme = Get-CfgValue -Cfg $old -Key 'theme'
     }) -Path $cfgLocal
     Write-Ok ("配置已保存（密码以 DPAPI 加密，仅本机当前用户可解）: " + $cfgLocal)
+
+    # 下载放在配置保存之后：失败只提示，不影响已保存的配置；首次 up 会自动补装
+    $tag = Install-ZjuConnect
+    if ($tag -and $tag -ne $zjuVersion) {
+        $c2 = Get-ToolConfig -LocalPath $cfgLocal -ToolPath $cfgTool
+        if ($c2) {
+            $c2 | Add-Member -NotePropertyName zjuVersion -NotePropertyValue $tag -Force
+            Save-ToolConfig -Cfg $c2 -Path $cfgLocal
+        }
+    }
 
     $t = Resolve-Targets
     Write-SshConfig -Mode $Mode -SshUser $SshUser -t $t
@@ -193,7 +215,11 @@ function Invoke-Up {
     if (-not $cfg) { throw '未初始化：先运行 init' }
     if (-not $cfg.vpnUser -or -not $cfg.vpnPassword) { throw '未配置上网账号，校外隧道不可用；校内直连不受影响' }
     if (Get-ZjuProc) { Write-Ok 'zju-connect 已在运行'; return }
-    if (-not (Test-Path $zc)) { throw ("缺少 " + $zc + " —— 运行 init 下载或手动放入 bin\") }
+    if (-not (Test-Path $zc)) {
+        Write-Host '[up] bin\zju-connect.exe 不存在，自动下载（首次约 10-30 秒）...'
+        Install-ZjuConnect | Out-Null
+    }
+    if (-not (Test-Path $zc)) { throw ("缺少 " + $zc + " —— 自动下载失败（多为当前网络到 GitHub 不通）：回校园网重试，或手动下载放入 bin\") }
     New-Item -ItemType Directory -Force -Path $logsDir | Out-Null
     if ($cfg.mode -eq 'tun') {
         schtasks /query /tn $taskName *> $null

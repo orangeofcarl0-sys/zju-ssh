@@ -217,7 +217,7 @@ $xaml = @'
             <ControlTemplate.Triggers>
               <Trigger Property="IsChecked" Value="True">
                 <Setter TargetName="bd" Property="Background" Value="#2A2A44"/>
-                <Setter Property="Foreground" Value="White"/>
+                <Setter Property="Foreground" Value="{StaticResource TextMain}"/>
               </Trigger>
               <MultiTrigger>
                 <MultiTrigger.Conditions>
@@ -267,7 +267,7 @@ $xaml = @'
         <RadioButton x:Name="navSettings" Style="{StaticResource NavBtn}" GroupName="nav" Margin="0,6,0,0" Content="⚙  设置"/>
         <RadioButton x:Name="navLog" Style="{StaticResource NavBtn}" GroupName="nav" Margin="0,6,0,0" Content="▤  日志"/>
         <TextBlock Margin="14,26,0,0" Text="ZJU SSH" Foreground="#4A4A60" FontSize="10"/>
-        <TextBlock x:Name="verText" Margin="14,2,0,0" Text="v1.3.0" Foreground="#4A4A60" FontSize="10"/>
+        <TextBlock x:Name="verText" Margin="14,2,0,0" Text="v1.3.1" Foreground="#4A4A60" FontSize="10"/>
       </StackPanel>
     </Border>
 
@@ -324,57 +324,52 @@ $xaml = @'
                 <RowDefinition Height="Auto"/>
               </Grid.RowDefinitions>
               <StackPanel Grid.Row="0" Grid.Column="0">
+                <TextBlock Style="{StaticResource Lbl}" Text="工作站地址（必填，管理员告知）"/>
+                <TextBox x:Name="tSshHost" Style="{StaticResource Inp}"/>
+              </StackPanel>
+              <StackPanel Grid.Row="0" Grid.Column="2">
+                <TextBlock Style="{StaticResource Lbl}" Text="SSH 端口"/>
+                <TextBox x:Name="tSshPort" Style="{StaticResource Inp}"/>
+              </StackPanel>
+              <StackPanel Grid.Row="2" Grid.Column="0">
                 <TextBlock Style="{StaticResource Lbl}" Text="ZJU SSH 账户"/>
                 <TextBox x:Name="tSshUser" Style="{StaticResource Inp}"/>
               </StackPanel>
-              <StackPanel Grid.Row="0" Grid.Column="2">
+              <StackPanel Grid.Row="2" Grid.Column="2">
                 <TextBlock Style="{StaticResource Lbl}" Text="校园网/VPN 上网账号（学号或工号）"/>
                 <TextBox x:Name="tVpnUser" Style="{StaticResource Inp}"/>
               </StackPanel>
-              <StackPanel Grid.Row="2" Grid.Column="0">
+              <StackPanel Grid.Row="4" Grid.Column="0">
+                <TextBlock Style="{StaticResource Lbl}" Text="上网密码"/>
+                <TextBox x:Name="tVpnPass" Style="{StaticResource Inp}"/>
+              </StackPanel>
+              <StackPanel Grid.Row="4" Grid.Column="2">
                 <TextBlock Style="{StaticResource Lbl}" Text="通道模式"/>
                 <ComboBox x:Name="cmoMode" Style="{StaticResource DarkCombo}">
                     <ComboBoxItem Content="TUN（推荐，需一次管理员授权）" IsSelected="True"/>
                   <ComboBoxItem Content="SOCKS（免管理员，用 Git Bash ssh）"/>
                 </ComboBox>
               </StackPanel>
-              <StackPanel Grid.Row="2" Grid.Column="2">
-                <TextBlock Style="{StaticResource Lbl}" Text="上网密码"/>
-                <TextBox x:Name="tVpnPass" Style="{StaticResource Inp}"/>
-              </StackPanel>
-              <StackPanel Grid.Row="4" Grid.Column="0" Orientation="Horizontal">
+              <StackPanel Grid.Row="6" Grid.Column="0" Orientation="Horizontal">
                 <CheckBox x:Name="tglAuto" Style="{StaticResource Switch}" Content="开机自动启动校外隧道（TUN）"/>
               </StackPanel>
-              <StackPanel Grid.Row="4" Grid.Column="2" Orientation="Horizontal" HorizontalAlignment="Right">
+              <StackPanel Grid.Row="6" Grid.Column="2" Orientation="Horizontal" HorizontalAlignment="Right">
                 <Button x:Name="btnApply" Style="{StaticResource GhostBtn}" Content="保存配置" Width="110" Margin="0,0,10,0"/>
                 <Button x:Name="btnKey" Style="{StaticResource GhostBtn}" Content="生成/复制公钥" Width="130"/>
               </StackPanel>
             </Grid>
-            <Expander Header="高级：工作站地址 / 端口 / ssh 别名 / RVPN 服务器（一般无需改动）" Foreground="#8A8AA0" FontSize="12" Margin="0,16,0,0">
+            <Expander Header="高级：ssh 别名 / RVPN 服务器（一般无需改动）" Foreground="#8A8AA0" FontSize="12" Margin="0,16,0,0">
               <Grid Margin="0,10,0,0">
                 <Grid.ColumnDefinitions>
                   <ColumnDefinition Width="*"/>
                   <ColumnDefinition Width="20"/>
                   <ColumnDefinition Width="*"/>
                 </Grid.ColumnDefinitions>
-                <Grid.RowDefinitions>
-                  <RowDefinition Height="Auto"/>
-                  <RowDefinition Height="10"/>
-                  <RowDefinition Height="Auto"/>
-                </Grid.RowDefinitions>
-                <StackPanel Grid.Row="0" Grid.Column="0">
-                  <TextBlock Style="{StaticResource Lbl}" Text="工作站地址（SSH 主机，必填）"/>
-                  <TextBox x:Name="tSshHost" Style="{StaticResource Inp}"/>
-                </StackPanel>
-                <StackPanel Grid.Row="0" Grid.Column="2">
-                  <TextBlock Style="{StaticResource Lbl}" Text="SSH 端口"/>
-                  <TextBox x:Name="tSshPort" Style="{StaticResource Inp}"/>
-                </StackPanel>
-                <StackPanel Grid.Row="2" Grid.Column="0">
+                <StackPanel Grid.Column="0">
                   <TextBlock Style="{StaticResource Lbl}" Text="ssh 别名（config 里的 Host 名）"/>
                   <TextBox x:Name="tAlias" Style="{StaticResource Inp}"/>
                 </StackPanel>
-                <StackPanel Grid.Row="2" Grid.Column="2">
+                <StackPanel Grid.Column="2">
                   <TextBlock Style="{StaticResource Lbl}" Text="RVPN 服务器:端口（冒号分隔）"/>
                   <TextBox x:Name="tZjuServer" Style="{StaticResource Inp}"/>
                 </StackPanel>
@@ -486,7 +481,7 @@ function Update-StatusQuiet {
     $p = [int](Get-CfgValue -Cfg $cfg -Key 'sshPort')
     $ui.homeTarget.Text = if ($h) { ("{0}:{1}" -f $h, $p) } else { '—' }
     $ui.homeAlias.Text = if ($al) { $al } else { '—' }
-    if (-not $h) { Set-Status '#77778E' '未配置工作站地址' '未配置工作站地址' '在“设置”页高级区填写工作站地址并保存配置。'; return }
+    if (-not $h) { Set-Status '#77778E' '未配置工作站地址' '未配置工作站地址' '在“设置”页第一行填写工作站地址并保存配置。'; return }
     if (Test-TcpPort -h $h -p $p -ms 500) { Set-Status '#2ECC71' '已连接 · 校内直连' '已连接' ('当前为校内网络，任何终端执行 ssh ' + $al + ' 即可。') }
     elseif (Test-SocksReady) { Set-Status '#F39C12' '校外隧道运行中' '校外隧道运行中' ('流量已可经 RVPN 隧道直达校园网，直接 ssh ' + $al + '。') }
     elseif (Get-ZjuProc) { Set-Status '#F39C12' '隧道启动中…' '隧道启动中…' 'zju-connect 进程存在，等待隧道就绪（10-30 秒）。' }
@@ -520,6 +515,7 @@ $timer.Add_Tick({
         $timer.Stop()
         $script:proc = $null
         Remove-Item Env:\ZJU_SSH_VPNPASS -ErrorAction SilentlyContinue   # 用后即清
+        Remove-Item Env:\ZJU_SSH_NONINTERACTIVE -ErrorAction SilentlyContinue   # 用后即清
         Set-Busy $false ''
         Append-Log "■ 完成（退出码 $code）"
         if ($script:copyOnDone) {
@@ -559,7 +555,7 @@ $ui.btnApply.Add_Click({
     $p = $ui.tVpnPass.Text
     $escQ = { param($s) ('"' + ($s -replace '"', '\"') + '"') }
     $hh = $ui.tSshHost.Text.Trim()
-    if (-not $hh) { [void][System.Windows.Forms.MessageBox]::Show('请填写工作站地址（高级区）', '提示'); return }
+    if (-not $hh) { [void][System.Windows.Forms.MessageBox]::Show('请填写工作站地址（设置页第一行）', '提示'); return }
     $pp = $ui.tSshPort.Text.Trim(); if (-not $pp -match '^\d+$') { $pp = '22' }
     $aa = $ui.tAlias.Text.Trim();  if (-not $aa) { $aa = 'zju' }
     $zs = $ui.tZjuServer.Text.Trim(); if (-not $zs) { $zs = 'rvpn.zju.edu.cn:443' }
@@ -567,8 +563,13 @@ $ui.btnApply.Add_Click({
     $zp = if (($zs -split ':').Count -gt 1) { ($zs -split ':')[1] } else { '443' }
     # 密码经环境变量传递（不出现在子进程命令行里，避免本机其他进程读取）
     $env:ZJU_SSH_VPNPASS = $p
-    $argline = 'init -Mode ' + $m + ' -SshUser ' + (& $escQ $u) + ' -VpnUser ' + (& $escQ $v) `
-        + ' -SshHost ' + (& $escQ $hh) + ' -SshPort ' + $pp + ' -HostAlias ' + (& $escQ $aa) `
+    # 子进程无控制台可交互：设此标记让 init 的 Read-Host 安全跳过（否则隐藏窗口里会永久挂起）
+    $env:ZJU_SSH_NONINTERACTIVE = '1'
+    # -NoDownload：保存只写配置、立即完成；zju-connect 下载放到首次“一键连接”时自动进行
+    # 注：powershell -File 会丢弃空字符串参数，空值必须整体不传（-VpnUser 空=跳过校外通道）
+    $argline = 'init -NoDownload -Mode ' + $m + ' -SshUser ' + (& $escQ $u)
+    if ($v) { $argline += ' -VpnUser ' + (& $escQ $v) }
+    $argline += ' -SshHost ' + (& $escQ $hh) + ' -SshPort ' + $pp + ' -HostAlias ' + (& $escQ $aa) `
         + ' -Server ' + (& $escQ $sv) + ' -ZjuPort ' + $zp
     Start-Tool $argline '保存配置' $false
 })
@@ -607,9 +608,17 @@ $ui.navSettings.Add_Click({ Show-Page 'settings' })
 $ui.navLog.Add_Click({ Show-Page 'log' })
 
 $ui.btnTheme.Add_Click({
-    $newTheme = if ($script:theme -eq 'dark') { 'light' } else { 'dark' }
-    $cfg.theme = $newTheme
-    Save-ToolConfig -Cfg $cfg -Path $cfgLocal
+    # 全新机器可能没有任何 config.json（$cfg 为 null），必须自建对象，否则赋值抛异常会带崩整个进程
+    try {
+        $newTheme = if ($script:theme -eq 'dark') { 'light' } else { 'dark' }
+        $c = Get-ToolConfig -LocalPath $cfgLocal -ToolPath $cfgTool
+        if (-not $c) { $c = New-Object psobject }
+        $c | Add-Member -NotePropertyName theme -NotePropertyValue $newTheme -Force
+        Save-ToolConfig -Cfg $c -Path $cfgLocal
+    } catch {
+        Append-Log ('主题保存失败（主题未切换）：' + $_.Exception.Message)
+        return
+    }
     # 重启窗口以应用主题（调色板在 XAML 加载前注入）
     Start-Process powershell -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-WindowStyle','Hidden','-File',('"' + (Join-Path $toolDir 'zju-ssh-gui.ps1') + '"')) -WorkingDirectory $toolDir
     $script:reallyExit = $true
