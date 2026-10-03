@@ -265,7 +265,7 @@ $xaml = @'
         <RadioButton x:Name="navHome" Style="{StaticResource NavBtn}" GroupName="nav" IsChecked="True" Content="⌂  主页"/>
         <RadioButton x:Name="navSettings" Style="{StaticResource NavBtn}" GroupName="nav" Margin="0,6,0,0" Content="⚙  设置"/>
         <TextBlock Margin="14,26,0,0" Text="ZJU SSH" Foreground="#4A4A60" FontSize="10"/>
-        <TextBlock x:Name="verText" Margin="14,2,0,0" Text="v1.5.0" Foreground="#4A4A60" FontSize="10"/>
+        <TextBlock x:Name="verText" Margin="14,2,0,0" Text="v1.5.1" Foreground="#4A4A60" FontSize="10"/>
       </StackPanel>
     </Border>
 
@@ -518,7 +518,13 @@ function Update-StatusQuiet {
     if (-not $h) { Set-Status '#77778E' '未配置工作站地址' '未配置工作站地址' '在“设置”页第一行填写工作站地址并保存配置。'; return }
     if (Test-TcpPort -h $h -p $p -ms 500) { Set-Status '#2ECC71' '已连接 · 校内直连' '已连接' ('当前为校内网络，任何终端执行 ssh ' + $al + ' 即可。') }
     elseif (Test-SocksReady) { Set-Status '#F39C12' '校外隧道运行中' '校外隧道运行中' ('流量已可经 RVPN 隧道直达校园网，直接 ssh ' + $al + '。') }
-    elseif (Get-ZjuProc) { Set-Status '#F39C12' '隧道启动中…' '隧道启动中…' 'zju-connect 进程存在，等待隧道就绪（10-30 秒）。' }
+    elseif (Get-ZjuProc) {
+        # 区分"正在等验证码"与"正在建立"：前者要用户去操作，不能只说"启动中"
+        $tailF = if ($script:guiMode -eq 'tun') { Join-Path $toolDir 'logs\zju-tun.log' } else { Join-Path $toolDir 'logs\zju-out.log' }
+        if (Get-ZjuCaptchaUrl $tailF) { Set-Status '#F39C12' '等待图形验证码' '等待图形验证码' '请在浏览器打开的验证码网页里点选图片字符并提交。' }
+        elseif (Get-ZjuChallenge $tailF) { Set-Status '#F39C12' '等待短信验证码' '等待短信验证码' '请在下方输入框填入手机收到的验证码并提交。' }
+        else { Set-Status '#F39C12' '隧道启动中…' '隧道启动中…' 'zju-connect 进程存在，正在建立隧道（10-30 秒）。' }
+    }
     else { Set-Status '#77778E' '未连接' '未连接' ('校外环境请点“一键连接 ZJU”自动建立隧道，然后 ssh ' + $al + '。') }
 }
 
@@ -609,8 +615,10 @@ $timer.Add_Tick({
         Read-Grow $script:errF ([ref]$script:posE)
         # 先取一次 Handle：进程退出后 ExitCode 只有在句柄已打开时才可读，否则恒为空
         $code = $script:proc.ExitCode
-        $timer.Stop()
         $script:proc = $null
+        # 注意：**不能** $timer.Stop()。计时器负责尾随长驻隧道的内核日志与认证检测，
+        # 隧道生命周期独立于本次 up 子任务；停了它，up 一退出（如认证还没做完）就再也
+        # 看不到内核输出、也检测不到验证码提示（实测：图形码提交后短信提示永远不显示）。
         Remove-Item Env:\ZJU_SSH_VPNPASS -ErrorAction SilentlyContinue   # 用后即清
         Remove-Item Env:\ZJU_SSH_NONINTERACTIVE -ErrorAction SilentlyContinue   # 用后即清
         Set-Busy $false ''

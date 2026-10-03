@@ -1,6 +1,6 @@
 # zju-ssh
 
-> v1.5.0 · [MIT License](LICENSE) · Windows GUI+CLI / macOS+Linux CLI
+> v1.5.1 · [MIT License](LICENSE) · Windows GUI+CLI / macOS+Linux CLI
 
 **ZJU SSH 助手** —— 让"任何网络下 `ssh 浙大校园网工作站`"变成一条零配置的命令。
 **整个工具围绕 [zju-connect](https://github.com/Mythologyli/zju-connect)（aTrust 协议开源客户端）构建，专为浙江大学校园网打造**：
@@ -23,7 +23,7 @@
 - **图形界面**（Windows）：状态实时探测、一键连接、配置表单、关闭窗口最小化到托盘常驻（托盘双击唤回、右键退出）、一键复制诊断信息
 - **服务端连接日志**（可选部署在工作站上）：每次 SSH 连接的用户/来源/认证方式/时长入档
 - **macOS/Linux CLI**：与 Windows 同源的完整命令行（含开机自启）
-- 零依赖：Windows 使用系统自带 OpenSSH、csc、WPF；下载 zju-connect 后即用
+- 零依赖：Windows 使用系统自带 OpenSSH、csc、WPF；下载 zju-connect 后即用（TUN 模式首次连接会自动补装 `wintun.dll` 驱动）
 
 ## 下载安装（Releases 分发）
 

@@ -76,6 +76,16 @@ Check 'sh 下载链零 API 依赖' ($shText2 -notmatch 'api\.github\.com/repos')
 Check 'sh 下载链含 nightly 通道' ($shText2 -match 'releases/download/nightly/')
 Check 'sh 下载链含镜像回退' (($shText2 -match 'ghproxy\.cn') -and ($shText2 -match 'gh-proxy\.com'))
 Check 'CLI 无重复函数定义' ([regex]::Matches($cliText, '(?m)^function Invoke-Connect').Count -eq 1)
+# GUI 计时器必须常开：up 退出后若 Stop 而不重启，就再也尾随不到内核日志、检测不到验证码（实测 bug）。
+# 只匹配"行首（允许缩进）的 $timer.Stop()"，避免命中注释里提到该调用的说明文字。
+$guiText = [System.IO.File]::ReadAllText((Join-Path $toolDir 'zju-ssh-gui.ps1'))
+Check 'GUI 不在 up 退出时停计时器' ($guiText -notmatch '(?m)^\s*\$timer\.Stop\(\)')
+# 就绪判据必须是内核日志的成功标志，不能是"进程存在"（后者在认证前即成立，会误报就绪）
+Check 'CLI 就绪判据基于内核日志' ($cliText -match 'function Test-ZjuLoggedReady')
+Check 'CLI 用日志判据等待 TUN 就绪' ($cliText -match 'Ready \{ Test-ZjuLoggedReady')
+# TUN 依赖 wintun.dll（上游 README 要求）；发布包不含，必须能自动补装
+Check 'CLI 含 wintun 自动安装' ($cliText -match 'function Install-Wintun')
+Check 'CLI 含 curl 下载回退' ($cliText -match 'function Get-Url')
 # 二次认证链路：模块必须导出挑战/图形码识别；up 不得再用 -Wait 等隧道进程树（那会让 GUI 永久卡在"正在连接"）
 Check '模块含挑战识别函数' ($modText -match 'function Get-ZjuChallenge')
 Check '模块含图形验证码识别函数' ($modText -match 'function Get-ZjuCaptchaUrl')

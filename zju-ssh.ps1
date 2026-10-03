@@ -43,6 +43,21 @@ $taskName = 'ZJU-SSH-Tunnel'
 
 function Get-Cfg { Get-ToolConfig -LocalPath $cfgLocal -ToolPath $cfgTool }
 
+# 下载到文件：先试 Invoke-WebRequest，失败再退 curl.exe。
+# 必要性：PS 5.1 的 IWR 对某些站点（如 wintun.net）会 "基础连接已经关闭"（TLS/HTTP2 差异），
+# 而系统自带 curl.exe 能正常下载——实测同一 URL curl 200、IWR 必失败。
+function Get-Url([string]$Uri, [string]$OutFile, [int]$TimeoutSec = 120) {
+    try {
+        Invoke-WebRequest -Uri $Uri -OutFile $OutFile -TimeoutSec $TimeoutSec -UseBasicParsing
+        if ((Test-Path $OutFile) -and (Get-Item $OutFile).Length -gt 0) { return }
+    } catch { }
+    $curl = (Get-Command curl.exe -ErrorAction SilentlyContinue).Source
+    if (-not $curl) { $curl = (Get-Command curl -ErrorAction SilentlyContinue).Source }
+    if (-not $curl) { throw '下载失败且系统无 curl.exe 可用' }
+    & $curl -sL --max-time $TimeoutSec -o $OutFile $Uri
+    if ($LASTEXITCODE -ne 0) { throw ("curl 下载失败（退出码 " + $LASTEXITCODE + "）") }
+}
+
 # 单键更新配置（读-改-写，保留其余字段与密码密文）；失败静默——仅用于非关键元数据
 function Set-CfgKey([string]$Key, [string]$Value) {
     try {
@@ -124,7 +139,7 @@ function Install-ZjuConnect {
                else { 'GitHub stable' }
         Write-Host ("[init] 下载 zju-connect（{0}，通道 {1}）..." -f $src, $channel)
         try {
-            Invoke-WebRequest -Uri $u -OutFile $zip -TimeoutSec 120 -UseBasicParsing
+            Get-Url -Uri $u -OutFile $zip -TimeoutSec 120
             if ((Get-Item $zip).Length -gt 1MB) { Write-Ok ("下载成功（" + $src + "）"); $ok = $true; break }
             Write-Warn2 '下载内容异常（过小），换下一个源'
         } catch {
@@ -153,6 +168,48 @@ function Install-ZjuConnect {
         Write-Warn2 ("安装失败（" + $_.Exception.Message + "）——手动解压最新版 zip 放入 bin\ 亦可")
         return (Get-Cfg).zjuVersion
     }
+}
+
+# ---- init 子步骤 2b：下载 wintun.dll（仅 TUN 模式需要）----
+# zju-connect 的 TUN 模式在 Windows 上依赖 wintun.dll（WireGuard 的 TUN 驱动，上游 README 明确要求
+# 放在可执行文件同目录）。此前发布包从不含它，导致 TUN 模式对所有用户都报
+# "Error loading wintun.dll DLL" —— 认证成功也建不起隧道（实测）。
+# 官方只提供 zip 下载，故取 zip 后解出 amd64 的 dll。许可允许"随使用其 API 的软件一同分发"，
+# 但为保持仓库无二进制，采用与内核一致的按需下载策略。
+function Install-Wintun {
+    $dll = Join-Path $bin 'wintun.dll'
+    if (Test-Path $dll) { Write-Ok 'wintun.dll 已存在'; return $true }
+    if ($NoDownload) { Write-Ok '按需跳过 wintun.dll 下载（TUN 首次连接时会自动补装）'; return $false }
+    New-Item -ItemType Directory -Force -Path $bin | Out-Null
+    $urls = @(
+        'https://www.wintun.net/builds/wintun-0.14.1.zip',
+        'https://ghproxy.cn/https://www.wintun.net/builds/wintun-0.14.1.zip',
+        'https://gh-proxy.com/https://www.wintun.net/builds/wintun-0.14.1.zip'
+    )
+    $zip = Join-Path $env:TEMP 'wintun.zip'
+    foreach ($u in $urls) {
+        try {
+            Write-Host ('[init] 下载 wintun.dll（TUN 驱动）...')
+            Get-Url -Uri $u -OutFile $zip
+            if ((Get-Item $zip).Length -gt 100KB) {
+                Expand-Archive -Path $zip -DestinationPath (Join-Path $env:TEMP 'wintun-extract') -Force
+                $src = Join-Path $env:TEMP 'wintun-extract\wintun\bin\amd64\wintun.dll'
+                if (-not (Test-Path $src)) { $src = (Get-ChildItem (Join-Path $env:TEMP 'wintun-extract') -Recurse -Filter 'wintun.dll' | Where-Object { $_.FullName -match 'amd64' } | Select-Object -First 1).FullName }
+                if ($src -and (Test-Path $src)) {
+                    Copy-Item $src $dll -Force
+                    Remove-Item (Join-Path $env:TEMP 'wintun-extract') -Recurse -Force -ErrorAction SilentlyContinue
+                    Write-Ok 'wintun.dll 已安装就绪（TUN 模式可用）'
+                    return $true
+                }
+                throw '压缩包中未找到 amd64/wintun.dll'
+            }
+            Write-Warn2 '下载内容异常（过小），换下一个源'
+        } catch {
+            Write-Warn2 ("wintun 下载失败（" + $_.Exception.Message.Substring(0, [Math]::Min(60, $_.Exception.Message.Length)) + "），换下一个源")
+        }
+    }
+    Write-Warn2 'wintun.dll 下载失败——TUN 模式不可用。手动方案：从 wintun.net 下载 zip，解出 bin\amd64\wintun.dll 放入 bin\'
+    return $false
 }
 
 # ---- init 子步骤 3：写/合并 ~/.ssh/config（行级状态机，对损坏标记安全）----
@@ -246,6 +303,8 @@ function Invoke-Init {
             Save-ToolConfig -Cfg $c2 -Path $cfgLocal
         }
     }
+    # TUN 模式需要 wintun.dll（上游 README 要求）；发布包不含，按需下载
+    if ($Mode -eq 'tun') { Install-Wintun | Out-Null }
 
     $t = Resolve-Targets
     Write-SshConfig -Mode $Mode -SshUser $SshUser -t $t
@@ -305,6 +364,11 @@ function Invoke-Up {
         Install-ZjuConnect | Out-Null
     }
     if (-not (Test-Path $zc)) { throw ("缺少 " + $zc + " —— 自动下载失败（多为当前网络到 GitHub 不通）：回校园网重试，或手动下载放入 bin\") }
+    # TUN 需要 wintun.dll；缺了就补装（否则认证通过也会以 "Error loading wintun.dll" 建不起隧道）
+    if ($cfg.mode -eq 'tun' -and -not (Test-Path (Join-Path $bin 'wintun.dll'))) {
+        Write-Host '[up] 缺少 wintun.dll（TUN 驱动），自动补装...'
+        Install-Wintun | Out-Null
+    }
     New-Item -ItemType Directory -Force -Path $logsDir | Out-Null
     if ($cfg.mode -eq 'tun') {
         # 解耦设计：连接不依赖"开机自启"注册——任务在则静默复用（无 UAC），不在则当场 UAC 拉起隧道。
@@ -330,14 +394,20 @@ function Invoke-Up {
         }
         Write-Host '[up] 等待隧道建立（最多 90s，下方实时转发 zju-connect 日志）...'
         $logF = Get-ZjuLogFile
-        if (Wait-ZjuReady -LogFile $logF -Ready { Get-ZjuProc }) { Write-Ok 'zju-connect 已运行（TUN）'; return }
+        # 就绪判据 = 内核日志出现成功标志，而不是"进程存在"（后者在认证前就已成立，会误报就绪）
+        $r = Wait-ZjuReady -LogFile $logF -Ready { Test-ZjuLoggedReady $logF } -Alive { Get-ZjuProc }
+        if ($r -eq 'ready') { Write-Ok 'zju-connect 已运行（TUN，隧道已就绪）'; return }
+        if ($r -eq 'exited') { throw ('[up] 隧道进程已退出——看上方内核日志定位（账号/密码/验证码/协议）' + (Get-ChannelHint)) }
         throw ('[up] 启动超时——看上方 zju-connect 日志定位（账号/密码/验证码/协议），或运行 doctor' + (Get-ChannelHint))
     }
     # SOCKS 同样交给 runner：内核 stdin 受控，挑战口令可在界面输入（不再依赖最小化控制台窗口）
     Start-ZjuTunnel -Tun $false
     Write-Host '[up] 等待 SOCKS5 就绪（最多 90s，下方实时转发 zju-connect 日志）...'
     $logF = Get-ZjuLogFile
-    if (Wait-ZjuReady -LogFile $logF -Ready { Test-SocksReady }) { Write-Ok 'SOCKS5 127.0.0.1:1080 就绪'; return }
+    # SOCKS 以端口可连为准（内核起监听即代表认证已完成）
+    $r = Wait-ZjuReady -LogFile $logF -Ready { Test-SocksReady } -Alive { Get-ZjuProc }
+    if ($r -eq 'ready') { Write-Ok 'SOCKS5 127.0.0.1:1080 就绪'; return }
+    if ($r -eq 'exited') { throw ('[up] 隧道进程已退出——看上方内核日志定位（账号/密码/验证码/协议）' + (Get-ChannelHint)) }
     throw ('[up] 启动超时——看上方 zju-connect 日志定位（账号/密码/验证码/协议变更），或看 logs\zju-out.log' + (Get-ChannelHint))
 }
 
@@ -386,17 +456,35 @@ function Start-ZjuTunnel([bool]$Tun) {
     Start-Sleep -Milliseconds 900   # 等 runner 把日志文件与状态文件建起来
 }
 
-# 等待隧道就绪：逐秒探测，每 5s 报进度，实时转发内核日志行；
-# 一旦检测到二次认证提示，立刻把提示顶到前台（这是"卡住"最常见的原因）。
+# 隧道"真正就绪"的判据：内核日志出现成功标志（上游 main.go 登录成功并建栈后打印 "VPN client started"）。
+# 不能拿"进程存在"当就绪——进程在认证开始前就已存在，会把"刚启动/正等验证码"误报成"已就绪"
+# （实测：up 在用户提交图形码之前就宣告成功退出，导致后续认证提示失去跟踪）。
+function Test-ZjuLoggedReady {
+    param([string]$LogFile)
+    if (-not $LogFile -or -not (Test-Path $LogFile)) { return $false }
+    $text = ''
+    try {
+        $fs = [System.IO.File]::Open($LogFile, 'Open', 'Read', 'ReadWrite')
+        try {
+            $sr = New-Object System.IO.StreamReader($fs, [System.Text.Encoding]::UTF8)
+            $text = $sr.ReadToEnd()
+        } finally { $fs.Close() }
+    } catch { return $false }
+    return $text.Contains('VPN client started')
+}
+
+# 等待隧道就绪：逐秒探测，实时转发内核日志；检测到认证挑战就顶到前台并顺延截止时间。
+# 返回 'ready' / 'exited'（内核退出且未就绪）/ 'timeout'。
 function Wait-ZjuReady {
-    param([string]$LogFile, [scriptblock]$Ready)
+    param([string]$LogFile, [scriptblock]$Ready, [scriptblock]$Alive)
     $start = Get-Date
     $deadline = $start.AddSeconds(90)
     $script:lastTail = ''
     $script:challengeShown = ''
     $script:captchaShown = ''
     while ((Get-Date) -lt $deadline) {
-        if (& $Ready) { return $true }
+        if (& $Ready) { return 'ready' }
+        if ($Alive -and -not (& $Alive)) { return 'exited' }
         Start-Sleep -Seconds 1
         $el = [int]((Get-Date) - $start).TotalSeconds
         $tail = ''
@@ -427,14 +515,13 @@ function Wait-ZjuReady {
             Write-Host ''
         }
         # 人工认证期间不按秒表催：图形码要手点、短信要等手机，可能远超 90s。
-        # 只要有未完成的挑战/图形码，就把截止时间顺延（内核自身图形码超时 5 分钟）。
         if ($ch -or $cap) {
             $deadline = (Get-Date).AddSeconds(120)
         } elseif ($el -ge 3 -and $el % 5 -eq 0) {
             Write-Host ("[up] 建立中… {0}s/90s" -f $el)
         }
     }
-    return $false
+    return 'timeout'
 }
 
 function Invoke-Down {
@@ -490,6 +577,11 @@ function Invoke-Doctor {
         }
     }
     Write-Host ('[' + $(if (Test-Path $zc) {'✓'} else {'✗'}) + '] bin\zju-connect.exe')
+    # TUN 模式依赖 wintun.dll；缺失时认证能过但建不起网卡（"Error loading wintun.dll"）
+    if ($cfg -and $cfg.mode -eq 'tun') {
+        $wintunOk = Test-Path (Join-Path $bin 'wintun.dll')
+        Write-Host ('[' + $(if ($wintunOk) {'✓'} else {'✗'}) + '] bin\wintun.dll（TUN 驱动）' + $(if ($wintunOk) { '' } else { ' —— 缺失！重跑 init 或「一键连接」会自动补装' }))
+    }
     $state = if ($t.Host) { Get-ConnectionState -SshHost $t.Host -SshPort $t.Port } else { 'unset' }
     $stateText = switch ($state) {
         'zju'   { '✓ 直连 ' + $t.Host + ':' + $t.Port + '（校内网络）' }
