@@ -97,6 +97,11 @@ try {
     else { Add-Pass 'config.example.json 可解析且无凭据' }
 } catch { Add-Fail "config.example.json 解析失败: $($_.Exception.Message)" }
 
+# package.ps1 的 SHA256SUMS 必须写 LF：README 指引 macOS/Linux 跑 shasum -c，CRLF 会让校验失败
+$pkgText = [System.IO.File]::ReadAllText((Join-Path $repo 'release\package.ps1'))
+if ($pkgText -match 'WriteAllLines\(\$sumsPath') { Add-Fail 'package.ps1 用 WriteAllLines 写 SHA256SUMS（会产生 CRLF）' }
+else { Add-Pass 'package.ps1 SHA256SUMS 行尾安全（LF）' }
+
 # ---------------------------------------------------------------- §2 质量门 · 版本一致性
 Section '§2 质量门 · 版本一致性（四处 + tag）'
 

@@ -60,7 +60,9 @@ foreach ($zip in @($zipWin, $zipMac)) {
     $sums += ('{0}  {1}' -f $h.Hash.ToLower(), (Split-Path -Leaf $zip))
 }
 $sumsPath = Join-Path $OutDir 'SHA256SUMS.txt'
-[System.IO.File]::WriteAllLines($sumsPath, $sums, (New-Object System.Text.UTF8Encoding($false)))
+# 必须 LF：README 让 macOS/Linux 用户跑 shasum -c SHA256SUMS.txt，CRLF 会让文件名带上 \r 而校验失败
+$sumsText = (($sums -join "`n") + "`n")
+[System.IO.File]::WriteAllText($sumsPath, $sumsText, (New-Object System.Text.UTF8Encoding($false)))
 
 Write-Host '完成:'
 Get-ChildItem $OutDir -File | ForEach-Object { Write-Host ("  {0}  {1:N0} bytes" -f $_.Name, $_.Length) }
