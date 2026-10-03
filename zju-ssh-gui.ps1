@@ -267,7 +267,7 @@ $xaml = @'
         <RadioButton x:Name="navSettings" Style="{StaticResource NavBtn}" GroupName="nav" Margin="0,6,0,0" Content="⚙  设置"/>
         <RadioButton x:Name="navLog" Style="{StaticResource NavBtn}" GroupName="nav" Margin="0,6,0,0" Content="▤  日志"/>
         <TextBlock Margin="14,26,0,0" Text="ZJU SSH" Foreground="#4A4A60" FontSize="10"/>
-        <TextBlock x:Name="verText" Margin="14,2,0,0" Text="v1.3.2" Foreground="#4A4A60" FontSize="10"/>
+        <TextBlock x:Name="verText" Margin="14,2,0,0" Text="v1.3.3" Foreground="#4A4A60" FontSize="10"/>
       </StackPanel>
     </Border>
 
@@ -474,6 +474,15 @@ function Set-Busy([bool]$b, [string]$why) {
     else { $ui.prog.Visibility = 'Collapsed'; Update-StatusQuiet }
 }
 
+function Probe-Direct {
+    # 校内直连探测（“一键连接”先走这里）：工作站端口可达 = 校内网络，无需建隧道
+    $c = Get-ToolConfig -LocalPath $cfgLocal -ToolPath $cfgTool
+    if (-not $c) { return $false }
+    $h = Get-CfgValue -Cfg $c -Key 'sshHost'
+    if (-not $h) { return $false }
+    return (Test-TcpPort -h $h -p ([int](Get-CfgValue -Cfg $c -Key 'sshPort')) -ms 600)
+}
+
 function Update-StatusQuiet {
     $cfg = Get-ToolConfig -LocalPath $cfgLocal -ToolPath $cfgTool
     $al = Get-CfgValue -Cfg $cfg -Key 'hostAlias'
@@ -653,6 +662,16 @@ $window.Add_Closing({
         $notify.Visible = $true
     }
 })
+
+# 兜底：按钮处理器里的未捕获异常只记日志，不得带崩窗口（GUI 按钮只有实机点击才测得到，smoke 覆盖不了）
+try {
+    if (-not [System.Windows.Application]::Current) { $null = New-Object System.Windows.Application }
+    [System.Windows.Application]::Current.add_DispatcherUnhandledException({
+        param($s, $e)
+        try { Append-Log ('■ 内部错误（已拦截）：' + $e.Exception.Message) } catch { }
+        $e.Handled = $true
+    })
+} catch { }
 
 Update-StatusQuiet
 [void]$window.ShowDialog()
