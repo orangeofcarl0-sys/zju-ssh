@@ -265,7 +265,7 @@ $xaml = @'
         <RadioButton x:Name="navHome" Style="{StaticResource NavBtn}" GroupName="nav" IsChecked="True" Content="⌂  主页"/>
         <RadioButton x:Name="navSettings" Style="{StaticResource NavBtn}" GroupName="nav" Margin="0,6,0,0" Content="⚙  设置"/>
         <TextBlock Margin="14,26,0,0" Text="ZJU SSH" Foreground="#4A4A60" FontSize="10"/>
-        <TextBlock x:Name="verText" Margin="14,2,0,0" Text="v1.4.5" Foreground="#4A4A60" FontSize="10"/>
+        <TextBlock x:Name="verText" Margin="14,2,0,0" Text="v1.4.6" Foreground="#4A4A60" FontSize="10"/>
       </StackPanel>
     </Border>
 
@@ -676,9 +676,13 @@ $menuTray = New-Object System.Windows.Forms.ContextMenuStrip
 $miShow = $menuTray.Items.Add('显示主界面')
 $miExit = $menuTray.Items.Add('退出')
 $notify.ContextMenuStrip = $menuTray
-$miShow.Add_Click({ $window.Show(); $window.Activate() })
-$miExit.Add_Click({ $script:reallyExit = $true; $notify.Visible = $false; $window.Close() })
-$notify.Add_DoubleClick({ $window.Show(); $window.Activate() })
+# 托盘恢复只置标志，不直接 Show()：窗口由外层 ShowDialog 循环重新显示。
+# 若在此处 Show()，外层循环再调 ShowDialog() 会因窗口已可见而抛异常。
+$script:restoreRequested = $false
+$script:trayFrame = $null
+$miShow.Add_Click({ $script:restoreRequested = $true; if ($script:trayFrame) { $script:trayFrame.Continue = $false } })
+$miExit.Add_Click({ $script:reallyExit = $true; $notify.Visible = $false; if ($script:trayFrame) { $script:trayFrame.Continue = $false }; $window.Close() })
+$notify.Add_DoubleClick({ $script:restoreRequested = $true; if ($script:trayFrame) { $script:trayFrame.Continue = $false } })
 $window.Add_Closing({
     param($s, $e)
     if (-not $script:reallyExit) {
@@ -702,5 +706,21 @@ try {
 # 导致 GUI 启动后状态与日志永不自动更新）
 $timer.Start()
 Update-StatusQuiet
-[void]$window.ShowDialog()
+# 窗口生命周期：Close 时 Cancel+Hide 会让 ShowDialog 返回（WPF 模态循环随窗口隐藏而结束），
+# 但托盘常驻要求进程继续存活，故在 reallyExit 之前循环重入 ShowDialog。
+# 若不循环，脚本会直接走到底退出，托盘图标随之消失——"关闭最小化到托盘"从未真正生效。
+while (-not $script:reallyExit) {
+    $script:restoreRequested = $false
+    # ShowDialog 自身负责显示窗口（此处窗口必为 Hidden，直接 Show 后再 ShowDialog 会抛异常）
+    [void]$window.ShowDialog()
+    if ($script:reallyExit) { break }
+    # ShowDialog 返回且非退出 = 刚隐藏到托盘。PushFrame 跑嵌套消息循环等待唤回，
+    # 这样托盘菜单/双击事件才会被派发；Start-Sleep 轮询会阻塞消息泵使托盘失去响应。
+    if (-not $script:restoreRequested) {
+        $script:trayFrame = New-Object System.Windows.Threading.DispatcherFrame
+        [System.Windows.Threading.Dispatcher]::PushFrame($script:trayFrame)
+        $script:trayFrame = $null
+    }
+    if ($script:reallyExit) { break }
+}
 $notify.Visible = $false
