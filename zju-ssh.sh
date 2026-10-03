@@ -8,7 +8,7 @@
 # TUN 模式（需要 root）见 README，本脚本默认 SOCKS。
 
 set -u
-TOOL_VERSION="1.4.3"
+TOOL_VERSION="1.4.4"
 TOOL_DIR="$(cd "$(dirname "$0")" && pwd)"
 BIN="$TOOL_DIR/bin"
 CFG_LOCAL="$HOME/.config/zju-ssh/config.json"
@@ -60,17 +60,44 @@ cmd_init() {
   mkdir -p "$BIN" "$HOME/.config/zju-ssh" "$TOOL_DIR/logs" "$HOME/Library/LaunchAgents" "$HOME/.config/systemd/user"
   ARCH=$(detect_arch); [ -n "$ARCH" ] || die "无法识别架构"
   OS_TAG=$([ "$(uname)" = "Darwin" ] && echo "darwin" || echo "linux")
+  ZJU_REPO="${ZJU_REPO:-Mythologyli/zju-connect}"
+  CHANNEL="${ZJU_CHANNEL:-$(json_get zjuChannel)}"
+  [ "$CHANNEL" = "stable" ] || CHANNEL="nightly"
+  ASSET="zju-connect-$OS_TAG-$ARCH.zip"
   if [ ! -x "$BIN/zju-connect" ]; then
-    echo "[init] 下载 zju-connect $OS_TAG $ARCH ..."
-    TAG=$(curl -fsSL --max-time 30 "https://api.github.com/repos/${ZJU_REPO:-Mythologyli/zju-connect}/releases/latest" |
-          grep -o '"tag_name": *"[^"]*"' | head -1 | sed 's/.*"v/v/;s/"//')
-    [ -n "$TAG" ] || die "无法获取最新版本号（网络？）；可手动下载放入 bin/"
-    URL="https://github.com/Mythologyli/zju-connect/releases/download/$TAG/zju-connect-$OS_TAG-$ARCH.zip"
-    curl -fL --max-time 600 -o /tmp/zjc.zip "$URL" || die "下载失败，可手动下载 $URL"
-    unzip -oq /tmp/zjc.zip -d /tmp/zjc-extract
+    # 下载链零 API 依赖（与 Windows 侧同源）：releases permalink 直链 + 国内镜像回退。
+    # 不用 api.github.com/releases/latest——未认证配额 60 次/小时按出口 IP 计，校园网出口全组共享必撞 403。
+    # 通道 nightly（默认）含 aTrust 二次认证（RADIUS 质询）等修复，上游稳定版对 ZJU 当前认证已不可用。
+    if [ "$CHANNEL" = "nightly" ]; then
+      PATHS="releases/download/nightly/$ASSET releases/latest/download/$ASSET"
+    else
+      PATHS="releases/latest/download/$ASSET"
+    fi
+    DIRECT="https://github.com/$ZJU_REPO/$(echo $PATHS | awk '{print $1}')"
+    echo "[init] 下载 zju-connect $OS_TAG $ARCH（通道 $CHANNEL）..."
+    DL_URL=""
+    for P in $PATHS; do
+      # 直链与镜像分别拼：直链基址已含 github.com；镜像要求"前缀 + github.com/..."，
+      # 若统一用 base + github.com/... 会把直链拼成 github.com/github.com/... 而恒 404
+      for U in "https://github.com/$ZJU_REPO/$P" \
+               "https://ghproxy.cn/github.com/$ZJU_REPO/$P" \
+               "https://gh-proxy.com/github.com/$ZJU_REPO/$P"; do
+        echo "[init] 尝试 $U"
+        if curl -fL --max-time 600 -o /tmp/zjc.zip "$U" 2>/dev/null; then
+          SZ=$(wc -c < /tmp/zjc.zip 2>/dev/null | tr -d '[:space:]')
+          [ -n "$SZ" ] || SZ=0
+          if [ "$SZ" -gt 1048576 ]; then DL_URL="$U"; break 2; fi
+          echo "[!] 下载内容异常（过小），换下一个源"
+        else
+          echo "[!] 该源失败，换下一个源"
+        fi
+      done
+    done
+    [ -n "$DL_URL" ] || die "全部下载源失败。手动方案：浏览器打开 $DIRECT（或任一镜像前缀 + 该地址），解压出 zju-connect* 放入 bin/ 后重试"
+    unzip -oq /tmp/zjc.zip -d /tmp/zjc-extract || die "解压失败"
     find /tmp/zjc-extract -name 'zju-connect*' -type f -exec cp {} "$BIN/zju-connect" \;
     chmod +x "$BIN/zju-connect" && rm -rf /tmp/zjc-extract /tmp/zjc.zip
-    ok "已下载 $TAG"
+    ok "已下载 zju-connect（$CHANNEL 通道）"
   else
     ok "zju-connect 已存在"
   fi
@@ -82,8 +109,8 @@ cmd_init() {
   printf '%s' "本人上网账号（回车=跳过校外隧道）: "; read -r VPN_USER
   VPN_PASS=""
   if [ -n "$VPN_USER" ]; then printf '%s' "上网密码: "; read -r VPN_PASS; fi
-  printf '{\n  "schemaVersion": 1,\n  "server": "%s",\n  "port": "%s",\n  "vpnUser": "%s",\n  "vpnPassword": "%s",\n  "sshHost": "%s",\n  "sshPort": "%s",\n  "hostAlias": "%s",\n  "sshUser": "%s"\n}\n' \
-    "$ZJ_HOST" "$ZJ_PORT" "$VPN_USER" "$VPN_PASS" "$SSH_HOST" "$SSH_PORT" "$ALIAS" "$SSH_USER" > "$CFG_LOCAL"
+  printf '{\n  "schemaVersion": 1,\n  "server": "%s",\n  "port": "%s",\n  "vpnUser": "%s",\n  "vpnPassword": "%s",\n  "sshHost": "%s",\n  "sshPort": "%s",\n  "hostAlias": "%s",\n  "sshUser": "%s",\n  "zjuChannel": "%s"\n}\n' \
+    "$ZJ_HOST" "$ZJ_PORT" "$VPN_USER" "$VPN_PASS" "$SSH_HOST" "$SSH_PORT" "$ALIAS" "$SSH_USER" "$CHANNEL" > "$CFG_LOCAL"
   chmod 600 "$CFG_LOCAL"
   ok "配置已保存（明文，权限 600）: $CFG_LOCAL"
   # 写 ssh 配置（标记块幂等替换）

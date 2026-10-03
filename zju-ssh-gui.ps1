@@ -265,7 +265,7 @@ $xaml = @'
         <RadioButton x:Name="navHome" Style="{StaticResource NavBtn}" GroupName="nav" IsChecked="True" Content="⌂  主页"/>
         <RadioButton x:Name="navSettings" Style="{StaticResource NavBtn}" GroupName="nav" Margin="0,6,0,0" Content="⚙  设置"/>
         <TextBlock Margin="14,26,0,0" Text="ZJU SSH" Foreground="#4A4A60" FontSize="10"/>
-        <TextBlock x:Name="verText" Margin="14,2,0,0" Text="v1.4.3" Foreground="#4A4A60" FontSize="10"/>
+        <TextBlock x:Name="verText" Margin="14,2,0,0" Text="v1.4.4" Foreground="#4A4A60" FontSize="10"/>
       </StackPanel>
     </Border>
 

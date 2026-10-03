@@ -9,3 +9,9 @@ logs/
 
 # 本机配置（含凭据）
 config.json
+
+# 内部工作文档（含真实地址/账号/机器名，绝不入库）
+handoff.md
+
+# PowerShell 模块分析缓存（运行 PS 时在仓库根自动重建，非源码）
+Microsoft/

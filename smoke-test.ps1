@@ -6,9 +6,13 @@ $toolDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 Import-Module (Join-Path $toolDir 'zju-common.psm1') -Force -DisableNameChecking
 
 $script:fail = 0
+$script:warn = 0
 function Check([string]$name, [bool]$ok, [bool]$critical = $true) {
-    $mark = if ($ok) { '✓ PASS' } else { $fail++; if ($critical) { '✗ FAIL' } else { '! WARN' } }
-    Write-Host ("[{0}] {1}" -f $mark, $name)
+    # 必须写 $script:fail：函数内裸 $fail++ 只作用于函数局部副本，脚本级计数恒为 0，
+    # 导致冒烟永远 exit 0、监测门形同虚设（自 v1.3.0 起潜伏）。非关键项只记 WARN，不计入退出码。
+    if ($ok) { Write-Host ("[✓ PASS] {0}" -f $name); return }
+    if ($critical) { $script:fail++; Write-Host ("[✗ FAIL] {0}" -f $name) }
+    else { $script:warn++; Write-Host ("[! WARN] {0}" -f $name) }
 }
 
 Write-Host '=== zju-ssh 冒烟回归 ==='
@@ -59,6 +63,22 @@ try {
 # 6. zju-connect（非关键：缺省可手动下载）
 Check 'bin\zju-connect.exe 存在' (Test-Path (Join-Path $toolDir 'bin\zju-connect.exe')) $false
 
+# 6b. 下载链静态回归（离线可跑）：v1.4.1/1.4.2 的零 API + nightly 通道必须两侧同源；
+#     $direct 曾在 820c137 重构时丢失，导致"全部下载源失败"提示里的手动地址恒为空——用静态检查钉死。
+$cliText = [System.IO.File]::ReadAllText((Join-Path $toolDir 'zju-ssh.ps1'))
+$shText2 = [System.IO.File]::ReadAllText((Join-Path $toolDir 'zju-ssh.sh'))
+Check 'CLI 下载链含 $direct 定义（手动地址不再为空）' ($cliText -match '\$direct\s*=\s*"https://github\.com/\$repo')
+Check 'CLI 下载链零 API 依赖（不再查 api.github.com/releases）' ($cliText -notmatch 'api\.github\.com/repos/\$repo/releases')
+Check 'CLI 下载链含 nightly 通道' ($cliText -match 'releases/download/nightly/')
+Check 'CLI 下载链含镜像回退' (($cliText -match 'ghproxy\.cn') -and ($cliText -match 'gh-proxy\.com'))
+Check 'sh 下载链零 API 依赖' ($shText2 -notmatch 'api\.github\.com/repos')
+Check 'sh 下载链含 nightly 通道' ($shText2 -match 'releases/download/nightly/')
+Check 'sh 下载链含镜像回退' (($shText2 -match 'ghproxy\.cn') -and ($shText2 -match 'gh-proxy\.com'))
+Check 'CLI 无重复函数定义' ([regex]::Matches($cliText, '(?m)^function Invoke-Connect').Count -eq 1)
+# 直链与镜像拼接必须分开：统一 base+"github.com/..." 会拼出 github.com/github.com/... 恒 404（v1.4.2 起直链从未生效）
+Check 'CLI 直链未被拼成 github.com/github.com' ($cliText -notmatch 'https://github\.com/''\s*\+\s*"github\.com/')
+Check 'sh 直链未被拼成 github.com/github.com' ($shText2 -notmatch '\$\{BASE\}github\.com/')
+
 # 7. 直连探测（结果依赖所处网络，仅展示）
 # 注：-p 必须先落变量——命令模式下 -p [int](...) 不求值，绑定失败会让整个检查项静默消失
 $probeHost = Get-CfgValue -Cfg $cfg -Key 'sshHost'
@@ -72,5 +92,5 @@ $out = & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $toolDir
 Check 'doctor 退出码为 0' ($LASTEXITCODE -eq 0)
 
 Write-Host ''
-Write-Host ("=== 冒烟结果: 失败 {0} 项 ===" -f $script:fail)
+Write-Host ("=== 冒烟结果: 失败 {0} 项（另有 {1} 项环境相关警告）===" -f $script:fail, $script:warn)
 exit $script:fail

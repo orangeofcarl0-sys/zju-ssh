@@ -3,7 +3,7 @@
 # schemaVersion=2：工作站地址/端口/别名/RVPN 服务器等全部可配，缺失字段回落默认值，
 # 因此 v1 老配置无需迁移即可用。
 
-$script:ToolVersion = '1.4.3'
+$script:ToolVersion = '1.4.4'
 
 function Get-ToolVersion { return $script:ToolVersion }
 
@@ -21,6 +21,7 @@ $script:Defaults = @{
 
     theme      = 'dark'
     zjuChannel = 'nightly'   # nightly 含 aTrust 二次认证等修复；stable=正式 release
+    zjuAssetDate = ''        # 内核资产 Last-Modified（nightly 为滚动构建，用它检测更新）
 }
 
 function Write-Ok([string]$msg)    { Write-Host "[✓] $msg" }

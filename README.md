@@ -1,6 +1,6 @@
 # zju-ssh
 
-> v1.4.3 · [MIT License](LICENSE) · Windows GUI+CLI / macOS+Linux CLI
+> v1.4.4 · [MIT License](LICENSE) · Windows GUI+CLI / macOS+Linux CLI
 
 **ZJU SSH 助手** —— 让"任何网络下 `ssh 浙大校园网工作站`"变成一条零配置的命令。
 **整个工具围绕 [zju-connect](https://github.com/Mythologyli/zju-connect)（aTrust 协议开源客户端）构建，专为浙江大学校园网打造**：
@@ -119,6 +119,7 @@ CLI 通过 `init -SshHost -SshPort -HostAlias -Server -ZjuPort -ZjuRepo` 传参�
 ## 兼容性与已知限制
 
 - **Windows 自带 ssh.exe 的 ProxyCommand 存在断流问题**（首包后数据不再送达代理 stdin，实测记录）：SOCKS 模式请使用 Git Bash 的 ssh 或 VS Code 指定 Git ssh；TUN 模式不受影响；
+- 内核下载（Windows 与 macOS/Linux 同源）走 GitHub releases 直链 + 国内镜像回退，不查 API，避免共享出口 IP 的配额限制；`doctor` 对 nightly 通道比对资产日期提示更新；
 - macOS/Linux 的 `connect` 依赖 openbsd 版 `nc -X 5`；
 - 脚本为 UTF-8（带 BOM），用 PowerShell 5.1+ 运行；改动后请跑 `smoke-test.ps1` 并用 `tools/norm-bom.ps1` 规范 BOM；
 - zju-connect 依赖学校 aTrust 协议现状，协议变更时回退学校官方客户端即可（校内直连路径不受影响）。

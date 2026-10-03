@@ -43,6 +43,16 @@ $taskName = 'ZJU-SSH-Tunnel'
 
 function Get-Cfg { Get-ToolConfig -LocalPath $cfgLocal -ToolPath $cfgTool }
 
+# 单键更新配置（读-改-写，保留其余字段与密码密文）；失败静默——仅用于非关键元数据
+function Set-CfgKey([string]$Key, [string]$Value) {
+    try {
+        $c = Get-ToolConfig -LocalPath $cfgLocal -ToolPath $cfgTool
+        if (-not $c) { return }
+        $c | Add-Member -NotePropertyName $Key -NotePropertyValue $Value -Force
+        Save-ToolConfig -Cfg $c -Path $cfgLocal
+    } catch { }
+}
+
 # 解析生效值：命令行参数 > 配置文件 > 内置默认
 function Resolve-Targets {
     $cfg = Get-Cfg
@@ -95,11 +105,19 @@ function Install-ZjuConnect {
     $asset = 'zju-connect-windows-amd64.zip'
     $paths = if ($channel -eq 'nightly') { @("releases/download/nightly/$asset", "releases/latest/download/$asset") }
              else { @("releases/latest/download/$asset") }
+    # 首选源的完整地址：下载全失败时给用户手动方案用（820c137 重构时丢了这行，报错里 URL 恒为空）
+    $direct = "https://github.com/$repo/$($paths[0])"
+    # 直链与镜像前缀必须分别拼：直链基址已含 github.com，镜像则要求"前缀 + github.com/..."，
+    # 统一用 base + "github.com/$repo/..." 会把直链拼成 github.com/github.com/... 而恒 404
     $urls = @()
-    foreach ($p in $paths) { foreach ($b in @('https://github.com/', 'https://ghproxy.cn/', 'https://gh-proxy.com/')) { $urls += ($b + "github.com/$repo/$p") } }
+    foreach ($p in $paths) {
+        $urls += "https://github.com/$repo/$p"
+        foreach ($m in @('https://ghproxy.cn/', 'https://gh-proxy.com/')) { $urls += ($m + "github.com/$repo/$p") }
+    }
     $urls = @($urls | Select-Object -Unique)
     $zip = Join-Path $env:TEMP $asset
     $ok = $false
+    $lastMod = ''
     foreach ($u in $urls) {
         $src = if ($u -notmatch '^https://github\.com') { ($u -split '/')[2] + ' 镜像' }
                elseif ($u -match '/download/nightly/') { 'GitHub nightly' }
@@ -117,12 +135,18 @@ function Install-ZjuConnect {
         Write-Warn2 ("全部下载源失败。手动方案：浏览器打开 " + $direct + "（或任一镜像前缀 + 该地址），解压出 zju-connect*.exe 放入 bin\ 后重试")
         return (Get-Cfg).zjuVersion
     }
+    # 记下资产 Last-Modified：nightly 是滚动构建、版本号恒为 nightly，doctor 只能靠日期判断有无更新
+    try { $lastMod = [string](Invoke-WebRequest -Uri $direct -Method Head -TimeoutSec 10 -UseBasicParsing).Headers['Last-Modified'] } catch { }
     try {
         Expand-Archive -Path $zip -DestinationPath (Join-Path $env:TEMP 'zjc-extract') -Force
         $exe = Get-ChildItem (Join-Path $env:TEMP 'zjc-extract') -Recurse -Filter 'zju-connect*.exe' | Select-Object -First 1
         if (-not $exe) { throw '压缩包中未找到 zju-connect*.exe' }
         Copy-Item $exe.FullName $zc -Force
         Remove-Item (Join-Path $env:TEMP 'zjc-extract') -Recurse -Force -ErrorAction SilentlyContinue
+        Set-CfgKey -Key 'zjuChannel' -Value $channel
+        if ($lastMod) { Set-CfgKey -Key 'zjuAssetDate' -Value $lastMod }
+        # nightly 无版本号（滚动构建），记通道名即可；doctor 靠 zjuAssetDate 判断更新
+        if ($channel -eq 'nightly') { Set-CfgKey -Key 'zjuVersion' -Value 'nightly' }
         Write-Ok 'zju-connect 已安装就绪'
         return (Get-Cfg).zjuVersion
     } catch {
@@ -239,6 +263,14 @@ function Invoke-Init {
     }
 }
 
+# 隧道超时时的额外指引：稳定版内核不含 ZJU 当前所需的 aTrust 二次认证修复，
+# 若用户手动切过 stable，超时最可能就是这个原因——直接点名 nightly 通道（handoff §20 遗留项）
+function Get-ChannelHint {
+    $channel = Get-CfgValue -Cfg (Get-Cfg) -Key 'zjuChannel'
+    if ($channel -eq 'stable') { return '；若日志显示认证挑战/协议相关失败，把配置 zjuChannel 改回 nightly（含 aTrust 二次认证修复）后删除 bin\zju-connect.exe 重连' }
+    return ''
+}
+
 function Invoke-Up {
     $cfg = Get-Cfg
     if (-not $cfg) { throw '未初始化：先运行 init' }
@@ -279,7 +311,7 @@ function Invoke-Up {
         }
         Write-Host '[up] 等待隧道建立（最多 60s，下方实时转发 zju-connect 日志）...'
         if (Wait-ZjuReady { Get-ZjuProc }) { Write-Ok 'zju-connect 已运行（TUN）'; return }
-        throw '[up] 启动超时——看上方 zju-connect 日志定位（账号/密码/验证码/协议），或运行 doctor'
+        throw ('[up] 启动超时——看上方 zju-connect 日志定位（账号/密码/验证码/协议），或运行 doctor' + (Get-ChannelHint))
     }
     # SOCKS 也走最小化可交互控制台：认证挑战（短信/动态口令/图形码）的消息会实时进 GUI 日志，
     # 用户点开任务栏 "zju-tunnel" 窗口输入即可；WindowStyle Hidden 的无 stdin 子进程会在挑战时挂死
@@ -290,7 +322,7 @@ function Invoke-Up {
     Start-Process -FilePath $env:ComSpec -ArgumentList ('/c "' + $runCmd + '"') -WindowStyle Minimized
     Write-Host '[up] 等待 SOCKS5 就绪（最多 60s，下方实时转发 zju-connect 日志）...'
     if (Wait-ZjuReady { Test-SocksReady }) { Write-Ok 'SOCKS5 127.0.0.1:1080 就绪'; return }
-    throw '[up] 启动超时——看上方 zju-connect 日志定位（账号/密码/验证码/协议变更），或看 logs\zju-err.log'
+    throw ('[up] 启动超时——看上方 zju-connect 日志定位（账号/密码/验证码/协议变更），或看 logs\zju-out.log' + (Get-ChannelHint))
 }
 
 # ---- zju-connect 运行日志（TUN=提权侧重定向；SOCKS=父进程重定向）——建立过程实时转发、事后可排障 ----
@@ -366,13 +398,26 @@ function Invoke-Doctor {
     if ($t.Host) { Write-Ok ("工作站目标: " + $t.Host + ":" + $t.Port + "  ssh 别名: " + $t.Alias) }
     else { Write-Warn2 '未配置工作站地址（init 时用 -SshHost 填写，或在 GUI 高级区填写）' }
     if ($cfg -and $cfg.mode -eq 'socks') { Write-Host ('[' + $(if (Test-Path $sshPipe) {'✓'} else {'✗'}) + '] bin\sshpipe.exe') }
-    if ($cfg -and $cfg.zjuVersion) {
+    if ($cfg -and (Test-Path $zc)) {
         $repo = Get-CfgValue -Cfg $cfg -Key 'zjuRepo'
-        try {
-            $latest = (Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/releases/latest" -TimeoutSec 10).tag_name
-            if ($latest -ne $cfg.zjuVersion) { Write-Warn2 ("zju-connect 可升级: $($cfg.zjuVersion) → $latest（重跑 init 更新）") }
-            else { Write-Ok ("zju-connect 版本最新（$latest）") }
-        } catch { Write-Warn2 'zju-connect 版本检查跳过（网络不可达）' }
+        $channel = Get-CfgValue -Cfg $cfg -Key 'zjuChannel'
+        if ($channel -ne 'stable') { $channel = 'nightly' }
+        if ($channel -eq 'nightly') {
+            # 版本检查也零 API 依赖：api.github.com 未认证配额按出口 IP 计（校园网全组共享必撞 403），
+            # 故只用资产文件的 Last-Modified 判断更新——nightly 是滚动构建，版本号恒为 nightly，只能比日期。
+            $headUrl = "https://github.com/$repo/releases/download/nightly/zju-connect-windows-amd64.zip"
+            try {
+                $lm = [string](Invoke-WebRequest -Uri $headUrl -Method Head -TimeoutSec 10 -UseBasicParsing).Headers['Last-Modified']
+                if ($lm) {
+                    $prev = [string](Get-CfgValue -Cfg $cfg -Key 'zjuAssetDate')
+                    if ($prev -and $prev -ne $lm) { Write-Warn2 ("nightly 内核有更新（$prev → $lm）——重跑 init 或删除 bin\zju-connect.exe 后重连以更新") }
+                    else { Write-Ok ("zju-connect nightly 内核日期 $lm") }
+                } else { Write-Ok 'zju-connect nightly 通道（资产日期未知）' }
+            } catch { Write-Warn2 'zju-connect 版本检查跳过（网络不可达）' }
+        } else {
+            if ($cfg.zjuVersion -and $cfg.zjuVersion -notmatch 'nightly') { Write-Ok ("zju-connect 稳定版 $($cfg.zjuVersion)") }
+            else { Write-Ok 'zju-connect stable 通道（手动放入的 bin\ 内核，版本未知）' }
+        }
     }
     Write-Host ('[' + $(if (Test-Path $zc) {'✓'} else {'✗'}) + '] bin\zju-connect.exe')
     $state = if ($t.Host) { Get-ConnectionState -SshHost $t.Host -SshPort $t.Port } else { 'unset' }
@@ -433,12 +478,6 @@ function Invoke-UninstallTask {
     $log = Join-Path $env:TEMP 'zju-task-uninstall.log'
     $out = Invoke-ElevatedScript -body ('schtasks /delete /tn ' + $taskName + ' /f') -logFile $log
     if ($out -match '成功') { Write-Ok '开机自启任务已移除' } else { Write-Host ('[uninstall-task] ' + $out.Trim()) }
-}
-
-function Invoke-Connect($h, $p) {
-    if (-not (Test-Path $sshPipe)) { throw 'socks 模式助手缺失：先运行 init' }
-    & $sshPipe auto $h $p
-    exit $LASTEXITCODE
 }
 
 switch ($Cmd.ToLowerInvariant()) {
