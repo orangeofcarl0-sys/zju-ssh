@@ -1,0 +1,11 @@
+# 构建与下载产物
+bin/
+*.exe
+dist/
+
+# 日志
+logs/
+*.log
+
+# 本机配置（含凭据）
+config.json

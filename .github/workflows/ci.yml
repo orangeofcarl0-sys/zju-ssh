@@ -1,0 +1,18 @@
+name: gate
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  release-gate:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: 发布监测门（质量门 + 隐私门 + 冒烟）
+        shell: powershell
+        run: .\release\release-gate.ps1

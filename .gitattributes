@@ -1,0 +1,14 @@
+# 行尾规范化：仓库内统一 LF 存储，检出按平台规则
+* text=auto
+*.ps1  text eol=crlf
+*.psm1 text eol=crlf
+*.bat  text eol=crlf
+*.cs   text
+*.sh   text eol=lf
+*.md   text
+*.json text
+*.yml  text eol=lf
+config.example.json text
+.gitattributes text
+.gitignore text
+LICENSE text

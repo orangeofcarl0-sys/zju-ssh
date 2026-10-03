@@ -1,0 +1,27 @@
+name: release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  prerelease:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: 发布监测门（质量门 + 隐私门 + 冒烟）
+        shell: powershell
+        run: .\release\release-gate.ps1 -ReleaseTag $env:GITHUB_REF_NAME
+      - name: 打包发布资产
+        shell: powershell
+        run: .\release\package.ps1
+      - name: 创建 GitHub prerelease
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $assets = Get-ChildItem dist -File | ForEach-Object { $_.FullName }
+          gh release create $env:GITHUB_REF_NAME @assets --prerelease --title "zju-ssh $env:GITHUB_REF_NAME (prerelease)" --notes-file release/notes-template.md

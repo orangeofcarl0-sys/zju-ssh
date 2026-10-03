@@ -1,0 +1,8 @@
+{
+  "server": "rvpn.zju.edu.cn",
+  "port": 443,
+  "vpnUser": "",
+  "vpnPassword": "",
+  "sshHost": "",
+  "sshPort": 22
+}
