@@ -265,7 +265,7 @@ $xaml = @'
         <RadioButton x:Name="navHome" Style="{StaticResource NavBtn}" GroupName="nav" IsChecked="True" Content="⌂  主页"/>
         <RadioButton x:Name="navSettings" Style="{StaticResource NavBtn}" GroupName="nav" Margin="0,6,0,0" Content="⚙  设置"/>
         <TextBlock Margin="14,26,0,0" Text="ZJU SSH" Foreground="#4A4A60" FontSize="10"/>
-        <TextBlock x:Name="verText" Margin="14,2,0,0" Text="v1.4.2" Foreground="#4A4A60" FontSize="10"/>
+        <TextBlock x:Name="verText" Margin="14,2,0,0" Text="v1.4.3" Foreground="#4A4A60" FontSize="10"/>
       </StackPanel>
     </Border>
 
@@ -521,10 +521,17 @@ $timer.Add_Tick({
             if (-not $script:zjuWasRun) {
                 $script:zjuWasRun = $true
                 $script:zjuTailPos = 0
+                $script:zjuNoLogHinted = $false
                 $script:zjuTailF = if ($script:guiMode -eq 'tun') { Join-Path $toolDir 'logs\zju-tun.log' } else { Join-Path $toolDir 'logs\zju-out.log' }
                 Append-Log '── zju-connect 运行日志（实时跟踪） ──'
             }
-            Read-Grow $script:zjuTailF ([ref]$script:zjuTailPos)
+            if ((Test-Path $script:zjuTailF) -or $script:zjuNoLogHinted) {
+                Read-Grow $script:zjuTailF ([ref]$script:zjuTailPos)
+            } elseif ($script:tick -ge 8) {
+                # 进程在跑但没有它的运行日志：多半是旧计划任务/旧内核启动的残留，给一条自救指引
+                $script:zjuNoLogHinted = $true
+                Append-Log '（尚未发现该进程的运行日志——建议点「停止校外隧道」结束后重新一键连接，以启用当前版本的内核与日志）'
+            }
         } elseif ($script:zjuWasRun) {
             $script:zjuWasRun = $false
             Append-Log '■ 隧道进程已退出'

@@ -243,7 +243,12 @@ function Invoke-Up {
     $cfg = Get-Cfg
     if (-not $cfg) { throw '未初始化：先运行 init' }
     if (-not $cfg.vpnUser -or -not $cfg.vpnPassword) { throw '未配置上网账号，校外隧道不可用；校内直连不受影响' }
-    if (Get-ZjuProc) { Write-Ok 'zju-connect 已在运行'; return }
+    if ($old = Get-ZjuProc) {
+        # 短路前给出可操作信息：僵尸/卡死进程（例如停在认证质询）会一直"已在运行"，必须先停再连
+        Write-Ok ("zju-connect 已在运行（PID {0}，{1} 启动）" -f $old.Id, $old.StartTime.ToString('HH:mm'))
+        Write-Host '[up] 若隧道实际未通或疑似卡死：点「停止校外隧道」结束它，再重新一键连接'
+        return
+    }
     if (-not (Test-Path $zc)) {
         Write-Host '[up] bin\zju-connect.exe 不存在，自动下载（首次约 10-30 秒）...'
         Install-ZjuConnect | Out-Null
@@ -253,13 +258,22 @@ function Invoke-Up {
     if ($cfg.mode -eq 'tun') {
         # 解耦设计：连接不依赖"开机自启"注册——任务在则静默复用（无 UAC），不在则当场 UAC 拉起隧道。
         # 需要管理员是 Windows 对 TUN 虚拟网卡的要求；"注册自启"只是可选的持久化功能，不是连接前置条件。
-        if (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue) {
-            Write-Host '[up] 通过计划任务启动 TUN 隧道...'
-            $prevEa = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
-            schtasks /run /tn $taskName | Out-Null
-            $runOk = ($LASTEXITCODE -eq 0)
-            $ErrorActionPreference = $prevEa
-            if (-not $runOk) { throw '[up] 计划任务启动失败（schtasks /run）——重跑 install-task 注册或运行 doctor 排查' }
+        $t = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+        # 任务指向的内核路径随注册时的目录而定：换了新解压目录后旧任务会拉起旧内核（或死路径），
+        # 表现为"已在运行但永远不通"。路径不匹配时改走直接提权启动，并提示重注册。
+        if ($t) {
+            $tExe = [string]($t.Actions[0].Execute).Trim('"')
+            if ($tExe -ieq $zc) {
+                Write-Host '[up] 通过计划任务启动 TUN 隧道...'
+                $prevEa = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+                schtasks /run /tn $taskName | Out-Null
+                $runOk = ($LASTEXITCODE -eq 0)
+                $ErrorActionPreference = $prevEa
+                if (-not $runOk) { throw '[up] 计划任务启动失败（schtasks /run）——重跑 install-task 注册或运行 doctor 排查' }
+            } else {
+                Write-Warn2 ("已注册的开机自启任务指向旧路径（" + $tExe + "）——本次改为直接提权启动；如需自启，请在当前目录重跑 install-task")
+                Start-ZjuTunElevated
+            }
         } else {
             Start-ZjuTunElevated
         }
