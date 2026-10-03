@@ -228,7 +228,6 @@ function Invoke-Up {
     if ($cfg.mode -eq 'tun') {
         # 解耦设计：连接不依赖"开机自启"注册——任务在则静默复用（无 UAC），不在则当场 UAC 拉起隧道。
         # 需要管理员是 Windows 对 TUN 虚拟网卡的要求；"注册自启"只是可选的持久化功能，不是连接前置条件。
-        New-Item -ItemType Directory -Force -Path $logsDir | Out-Null
         if (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue) {
             Write-Host '[up] 通过计划任务启动 TUN 隧道...'
             $prevEa = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
@@ -237,32 +236,65 @@ function Invoke-Up {
             $ErrorActionPreference = $prevEa
             if (-not $runOk) { throw '[up] 计划任务启动失败（schtasks /run）——重跑 install-task 注册或运行 doctor 排查' }
         } else {
-            Write-Host '[up] 请求管理员权限启动隧道（UAC 弹窗请点“是”）...'
-            try {
-                Start-Process -FilePath $zc -ArgumentList (Get-ZcArgs $true) -Verb RunAs -WindowStyle Hidden
-            } catch {
-                throw '[up] 已取消管理员授权，隧道未启动（创建 TUN 虚拟网卡需要管理员权限）'
-            }
+            Start-ZjuTunElevated
         }
-        $deadline = (Get-Date).AddSeconds(60)
-        while ((Get-Date) -lt $deadline) {
-            if (Get-ZjuProc) { Write-Ok 'zju-connect 已运行（TUN）'; return }
-            Start-Sleep -Seconds 1
-        }
-        throw '[up] 启动超时，运行 doctor 排查'
+        Write-Host '[up] 等待隧道建立（最多 60s，下方实时转发 zju-connect 日志）...'
+        if (Wait-ZjuReady { Get-ZjuProc }) { Write-Ok 'zju-connect 已运行（TUN）'; return }
+        throw '[up] 启动超时——看上方 zju-connect 日志定位（账号/密码/验证码/协议），或运行 doctor'
     }
     $zcArgs = Get-ZcArgs $false
     $p = Start-Process -FilePath $zc -ArgumentList $zcArgs -WindowStyle Hidden `
             -RedirectStandardOutput (Join-Path $logsDir 'zju-out.log') `
             -RedirectStandardError  (Join-Path $logsDir 'zju-err.log') -PassThru
     Set-Content -Path (Join-Path $bin 'zju.pid') -Value $p.Id
-    Write-Host '[up] 启动中，等待 SOCKS5 就绪（最多 60s）...'
-    $deadline = (Get-Date).AddSeconds(60)
+    Write-Host '[up] 等待 SOCKS5 就绪（最多 60s，下方实时转发 zju-connect 日志）...'
+    if (Wait-ZjuReady { Test-SocksReady }) { Write-Ok 'SOCKS5 127.0.0.1:1080 就绪'; return }
+    throw '[up] 启动超时——看上方 zju-connect 日志定位（账号/密码/验证码/协议变更），或看 logs\zju-err.log'
+}
+
+# ---- zju-connect 运行日志（TUN=提权侧重定向；SOCKS=父进程重定向）——建立过程实时转发、事后可排障 ----
+function Get-ZjuLogFile {
+    $cfg = Get-Cfg
+    if ($cfg -and $cfg.mode -eq 'tun') { return (Join-Path $logsDir 'zju-tun.log') }
+    return (Join-Path $logsDir 'zju-out.log')
+}
+
+function Get-ZjuLogTail {
+    $f = Get-ZjuLogFile
+    if (-not (Test-Path $f)) { return '' }
+    $l = @(Get-Content $f -Tail 1 -ErrorAction SilentlyContinue)
+    if ($l) { return [string]$l[0] }
+    return ''
+}
+
+# TUN 提权启动：UAC → 最小化控制台运行 zju-connect，输出重定向到运行日志（GUI 实时跟踪 + 事后排障依据）
+function Start-ZjuTunElevated {
+    New-Item -ItemType Directory -Force -Path $logsDir | Out-Null
+    $tunLog = Join-Path $logsDir 'zju-tun.log'
+    $runCmd = Join-Path $env:TEMP ('zju-run-' + [guid]::NewGuid().ToString('N').Substring(0, 8) + '.cmd')
+    Set-Content -Path $runCmd -Value ('"' + $zc + '" ' + ((Get-ZcArgs $true) -join ' ') + ' > "' + $tunLog + '" 2>&1' + "`r`nexit /b 0") -Encoding ASCII
+    $elCmd = Join-Path $env:TEMP ('zju-elev-' + [guid]::NewGuid().ToString('N').Substring(0, 8) + '.cmd')
+    Set-Content -Path $elCmd -Value ('start "zju-tunnel" /min "' + $runCmd + '"' + "`r`nexit /b 0") -Encoding ASCII
+    Write-Host '[up] 请求管理员权限启动隧道（UAC 弹窗请点“是”）...'
+    try { Start-Process -FilePath $elCmd -Verb RunAs -Wait }
+    catch { throw '[up] 已取消管理员授权，隧道未启动（创建 TUN 虚拟网卡需要管理员权限）' }
+    Start-Sleep -Milliseconds 800   # 等提权侧把日志文件建起来
+}
+
+# 等待隧道就绪：逐秒探测，每 5s 报进度，实时转发 zju-connect 最新日志行（建立过程不再鸦雀无声）
+function Wait-ZjuReady([scriptblock]$ready) {
+    $start = Get-Date
+    $deadline = $start.AddSeconds(60)
+    $script:lastTail = ''
     while ((Get-Date) -lt $deadline) {
-        if (Test-SocksReady) { Write-Ok 'SOCKS5 127.0.0.1:1080 就绪'; return }
+        if (& $ready) { return $true }
         Start-Sleep -Seconds 1
+        $el = [int]((Get-Date) - $start).TotalSeconds
+        if ($el -ge 3 -and $el % 5 -eq 0) { Write-Host ("[up] 建立中… {0}s/60s" -f $el) }
+        $tail = Get-ZjuLogTail
+        if ($tail -and $tail -ne $script:lastTail) { $script:lastTail = $tail; Write-Host ('  · ' + $tail) }
     }
-    throw '[up] 启动超时：账号密码错误/验证码/协议变更？看 logs\zju-err.log 或运行 doctor'
+    return $false
 }
 
 function Invoke-Down {

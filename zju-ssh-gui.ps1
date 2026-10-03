@@ -264,16 +264,22 @@ $xaml = @'
       <StackPanel Margin="10,16,10,10">
         <RadioButton x:Name="navHome" Style="{StaticResource NavBtn}" GroupName="nav" IsChecked="True" Content="⌂  主页"/>
         <RadioButton x:Name="navSettings" Style="{StaticResource NavBtn}" GroupName="nav" Margin="0,6,0,0" Content="⚙  设置"/>
-        <RadioButton x:Name="navLog" Style="{StaticResource NavBtn}" GroupName="nav" Margin="0,6,0,0" Content="▤  日志"/>
         <TextBlock Margin="14,26,0,0" Text="ZJU SSH" Foreground="#4A4A60" FontSize="10"/>
-        <TextBlock x:Name="verText" Margin="14,2,0,0" Text="v1.3.7" Foreground="#4A4A60" FontSize="10"/>
+        <TextBlock x:Name="verText" Margin="14,2,0,0" Text="v1.4.0" Foreground="#4A4A60" FontSize="10"/>
       </StackPanel>
     </Border>
 
     <Grid Grid.Row="1" Grid.Column="1" Margin="18,14,18,14">
-      <Border x:Name="pageHome" Style="{StaticResource Card}" VerticalAlignment="Top">
-        <StackPanel>
-          <Grid Margin="0,0,0,4">
+      <Border x:Name="pageHome" Style="{StaticResource Card}">
+        <Grid>
+          <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+          </Grid.RowDefinitions>
+          <Grid Grid.Row="0" Margin="0,0,0,4">
             <Grid.ColumnDefinitions>
               <ColumnDefinition Width="*"/>
               <ColumnDefinition Width="*"/>
@@ -287,20 +293,27 @@ $xaml = @'
               <TextBlock x:Name="homeAlias" Text="—" Foreground="{StaticResource TextMain}" FontSize="14" FontWeight="Bold"/>
             </StackPanel>
           </Grid>
-          <Border Height="1" Background="{StaticResource CardBorder}" Margin="0,10,0,16"/>
-          <TextBlock x:Name="heroStatus" Text="检测中…" Foreground="{StaticResource TextMain}" FontSize="21" FontWeight="Bold"
-                     HorizontalAlignment="Center"/>
-          <TextBlock x:Name="heroSub" Text="未连接。校外环境点下方按钮自动建立隧道；校内直接 ssh zju。"
-                     Foreground="{StaticResource TextDim}" FontSize="11" HorizontalAlignment="Center" Margin="0,8,0,16"/>
-          <ProgressBar x:Name="prog" Height="4" IsIndeterminate="True" Visibility="Collapsed" Margin="0,0,0,14"/>
-          <Button x:Name="btnConnect" Style="{StaticResource AccBtn}" Content="一键连接 ZJU"/>
-          <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,18,0,0">
-            <Button x:Name="btnDoctor" Style="{StaticResource GhostBtn}" Content="自检并复制诊断信息" Width="180" Margin="0,0,12,0"/>
-            <Button x:Name="btnDown" Style="{StaticResource GhostBtn}" Content="停止校外隧道" Width="150"/>
+          <StackPanel Grid.Row="1">
+            <TextBlock x:Name="heroStatus" Text="检测中…" Foreground="{StaticResource TextMain}" FontSize="20" FontWeight="Bold"
+                       HorizontalAlignment="Center"/>
+            <TextBlock x:Name="heroSub" Text="未连接。校外环境点下方按钮自动建立隧道；校内直接 ssh zju。"
+                       Foreground="{StaticResource TextDim}" FontSize="11" HorizontalAlignment="Center" Margin="0,6,0,10"/>
+            <ProgressBar x:Name="prog" Height="4" IsIndeterminate="True" Visibility="Collapsed" Margin="0,0,0,10"/>
+            <Button x:Name="btnConnect" Style="{StaticResource AccBtn}" Content="一键连接 ZJU"/>
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,12,0,0">
+              <Button x:Name="btnDoctor" Style="{StaticResource GhostBtn}" Content="自检并复制诊断信息" Width="180" Margin="0,0,12,0"/>
+              <Button x:Name="btnDown" Style="{StaticResource GhostBtn}" Content="停止校外隧道" Width="150"/>
+            </StackPanel>
+            <TextBlock Text="日常连接不需要打开本窗口：任何终端 ssh zju 即可。"
+                       Foreground="#66667E" FontSize="11" HorizontalAlignment="Center" Margin="0,10,0,0"/>
           </StackPanel>
-          <TextBlock Text="日常连接不需要打开本窗口：任何终端 ssh zju 即可。出问题先点自检，把剪贴板内容发到组里。"
-                     Foreground="#66667E" FontSize="11" TextWrapping="Wrap" HorizontalAlignment="Center" Margin="0,18,0,0"/>
-        </StackPanel>
+          <Border Grid.Row="2" Height="1" Background="{StaticResource CardBorder}" Margin="0,12,0,8"/>
+          <TextBlock Grid.Row="3" Style="{StaticResource CardTitle}" Text="实时日志（隧道建立过程与 zju-connect 活动，排障依据）" Margin="0,0,0,6"/>
+          <TextBox Grid.Row="4" x:Name="txtLog" Background="#101018" Foreground="#9FE0B0"
+                   BorderBrush="#2C2C3E" BorderThickness="1" IsReadOnly="True"
+                   FontFamily="Consolas" FontSize="11" VerticalScrollBarVisibility="Auto"
+                   TextWrapping="NoWrap"/>
+        </Grid>
       </Border>
 
       <Border x:Name="pageSettings" Style="{StaticResource Card}" Visibility="Collapsed">
@@ -377,20 +390,6 @@ $xaml = @'
           </StackPanel>
         </ScrollViewer>
       </Border>
-
-      <Border x:Name="pageLog" Style="{StaticResource Card}" Visibility="Collapsed">
-        <Grid>
-          <Grid.RowDefinitions>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="*"/>
-          </Grid.RowDefinitions>
-          <TextBlock Grid.Row="0" Style="{StaticResource CardTitle}" Text="运行日志（自检完成后诊断信息自动复制到剪贴板）"/>
-          <TextBox Grid.Row="1" x:Name="txtLog" Background="#101018" Foreground="#9FE0B0"
-                   BorderBrush="#2C2C3E" BorderThickness="1" IsReadOnly="True"
-                   FontFamily="Consolas" FontSize="11" VerticalScrollBarVisibility="Auto"
-                   TextWrapping="NoWrap"/>
-        </Grid>
-      </Border>
     </Grid>
   </Grid>
 </Window>
@@ -414,7 +413,7 @@ if ($script:theme -eq 'light') {
 $reader = New-Object System.Xml.XmlNodeReader $xamlDoc
 $window = [Windows.Markup.XamlReader]::Load($reader)
 $ui = @{}
-foreach ($n in @('dot','pillText','heroStatus','heroSub','prog','btnConnect','tSshUser','tVpnUser','tVpnPass','cmoMode','tglAuto','btnApply','btnKey','btnDoctor','btnDown','txtLog','tSshHost','tSshPort','tAlias','tZjuServer','pageHome','pageSettings','pageLog','navHome','navSettings','navLog','verText','btnTheme','homeTarget','homeAlias')) {
+foreach ($n in @('dot','pillText','heroStatus','heroSub','prog','btnConnect','tSshUser','tVpnUser','tVpnPass','cmoMode','tglAuto','btnApply','btnKey','btnDoctor','btnDown','txtLog','tSshHost','tSshPort','tAlias','tZjuServer','pageHome','pageSettings','navHome','navSettings','verText','btnTheme','homeTarget','homeAlias')) {
     $ui[$n] = $window.FindName($n)
 }
 $ui.btnTheme.Content = if ($script:theme -eq 'dark') { '☀' } else { '🌙' }
@@ -443,7 +442,6 @@ function Append-Log([string]$text) {
 function Show-Page([string]$p) {
     $ui.pageHome.Visibility = if ($p -eq 'home') { 'Visible' } else { 'Collapsed' }
     $ui.pageSettings.Visibility = if ($p -eq 'settings') { 'Visible' } else { 'Collapsed' }
-    $ui.pageLog.Visibility = if ($p -eq 'log') { 'Visible' } else { 'Collapsed' }
 }
 
 $script:proc = $null
@@ -453,6 +451,10 @@ $script:posO = 0
 $script:posE = 0
 $script:copyOnDone = $false
 $script:tick = 0
+$script:zjuWasRun = $false
+$script:zjuTailPos = 0
+$script:zjuTailF = ''
+$script:guiMode = ''
 $script:reallyExit = $false
 
 $timer = New-Object System.Windows.Threading.DispatcherTimer
@@ -484,6 +486,7 @@ function Probe-Direct {
 
 function Update-StatusQuiet {
     $cfg = Get-ToolConfig -LocalPath $cfgLocal -ToolPath $cfgTool
+    $script:guiMode = Get-CfgValue -Cfg $cfg -Key 'mode'
     $al = Get-CfgValue -Cfg $cfg -Key 'hostAlias'
     $h = Get-CfgValue -Cfg $cfg -Key 'sshHost'
     $p = [int](Get-CfgValue -Cfg $cfg -Key 'sshPort')
@@ -512,6 +515,20 @@ $timer.Add_Tick({
     if (-not $script:proc) {
         $script:tick++
         if ($script:tick -ge 40) { $script:tick = 0; Update-StatusQuiet }
+        # zju-connect 运行日志实时跟踪（隧道长驻，生命周期独立于 CLI 子任务；TUN/SOCKS 均有落盘日志）
+        $zj = Get-ZjuProc
+        if ($zj) {
+            if (-not $script:zjuWasRun) {
+                $script:zjuWasRun = $true
+                $script:zjuTailPos = 0
+                $script:zjuTailF = if ($script:guiMode -eq 'tun') { Join-Path $toolDir 'logs\zju-tun.log' } else { Join-Path $toolDir 'logs\zju-out.log' }
+                Append-Log '── zju-connect 运行日志（实时跟踪） ──'
+            }
+            Read-Grow $script:zjuTailF ([ref]$script:zjuTailPos)
+        } elseif ($script:zjuWasRun) {
+            $script:zjuWasRun = $false
+            Append-Log '■ 隧道进程已退出'
+        }
         return
     }
     Read-Grow $script:outF ([ref]$script:posO)
@@ -616,7 +633,6 @@ $ui.tglAuto.Add_Click({
 
 $ui.navHome.Add_Click({ Show-Page 'home' })
 $ui.navSettings.Add_Click({ Show-Page 'settings' })
-$ui.navLog.Add_Click({ Show-Page 'log' })
 
 $ui.btnTheme.Add_Click({
     # 全新机器可能没有任何 config.json（$cfg 为 null），必须自建对象，否则赋值抛异常会带崩整个进程
@@ -675,6 +691,9 @@ try {
     })
 } catch { }
 
+# 计时器必须常开：状态自动刷新与 zju-connect 运行日志跟踪都挂在 tick 上（此前只在 Start-Tool 里启动，
+# 导致 GUI 启动后状态与日志永不自动更新）
+$timer.Start()
 Update-StatusQuiet
 [void]$window.ShowDialog()
 $notify.Visible = $false
