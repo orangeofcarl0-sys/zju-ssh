@@ -83,6 +83,8 @@ function Build-Sshpipe {
 function Install-ZjuConnect {
     if (Test-Path $zc) { Write-Ok 'zju-connect 已存在'; return (Get-Cfg).zjuVersion }
     if ($NoDownload) { Write-Ok '按需跳过下载：首次“一键连接（up）”时会自动下载，也可手动下载放入 bin\'; return (Get-Cfg).zjuVersion }
+    # 解压目录里可能没有 bin\（发布 zip 不含空目录）：不先建目录，Copy-Item 会报"路径不存在"被误读成网络问题
+    New-Item -ItemType Directory -Force -Path $bin | Out-Null
     $repo = if ($ZjuRepo) { $ZjuRepo } else { 'Mythologyli/zju-connect' }
     Write-Host "[init] 从 GitHub（$repo）下载 zju-connect 最新版..."
     try {
