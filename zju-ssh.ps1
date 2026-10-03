@@ -85,24 +85,40 @@ function Install-ZjuConnect {
     if ($NoDownload) { Write-Ok '按需跳过下载：首次“一键连接（up）”时会自动下载，也可手动下载放入 bin\'; return (Get-Cfg).zjuVersion }
     # 解压目录里可能没有 bin\（发布 zip 不含空目录）：不先建目录，Copy-Item 会报"路径不存在"被误读成网络问题
     New-Item -ItemType Directory -Force -Path $bin | Out-Null
+    # 下载链零 API 依赖：GitHub releases permalink 直链 + 国内镜像回退。
+    # 原实现先查 api.github.com（未认证 60 次/小时，校园网出口是全组共享 IP，配额必然撞 403），且直链常被墙——双坑都已实测。
     $repo = if ($ZjuRepo) { $ZjuRepo } else { 'Mythologyli/zju-connect' }
-    Write-Host "[init] 从 GitHub（$repo）下载 zju-connect 最新版..."
+    $asset = 'zju-connect-windows-amd64.zip'
+    $direct = "https://github.com/$repo/releases/latest/download/$asset"
+    $mirrors = @('https://ghproxy.cn/', 'https://gh-proxy.com/')
+    $zip = Join-Path $env:TEMP $asset
+    $ok = $false
+    foreach ($u in (@($direct) + ($mirrors | ForEach-Object { $_ + $direct }))) {
+        $src = if ($u -match '^https://github\.com') { 'GitHub 直链' } else { ($u -split '/')[2] + ' 镜像' }
+        Write-Host ("[init] 下载 zju-connect（{0}）..." -f $src)
+        try {
+            Invoke-WebRequest -Uri $u -OutFile $zip -TimeoutSec 120 -UseBasicParsing
+            if ((Get-Item $zip).Length -gt 1MB) { Write-Ok ("下载成功（" + $src + "）"); $ok = $true; break }
+            Write-Warn2 '下载内容异常（过小），换下一个源'
+        } catch {
+            Write-Warn2 ("该源失败（" + $_.Exception.Message.Substring(0, [Math]::Min(80, $_.Exception.Message.Length)) + "），换下一个源")
+        }
+    }
+    if (-not $ok) {
+        Write-Warn2 ("全部下载源失败。手动方案：浏览器打开 " + $direct + "（或任一镜像前缀 + 该地址），解压出 zju-connect*.exe 放入 bin\ 后重试")
+        return (Get-Cfg).zjuVersion
+    }
     try {
-        $rel = Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/releases/latest" -TimeoutSec 30
-        $asset = $rel.assets | Where-Object { $_.name -match 'windows-(amd64|x86_64)\.zip$' } | Select-Object -First 1
-        if (-not $asset) { throw '未找到 windows 资产' }
-        $zip = Join-Path $env:TEMP $asset.name
-        Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $zip -TimeoutSec 90
         Expand-Archive -Path $zip -DestinationPath (Join-Path $env:TEMP 'zjc-extract') -Force
         $exe = Get-ChildItem (Join-Path $env:TEMP 'zjc-extract') -Recurse -Filter 'zju-connect*.exe' | Select-Object -First 1
         if (-not $exe) { throw '压缩包中未找到 zju-connect*.exe' }
         Copy-Item $exe.FullName $zc -Force
         Remove-Item (Join-Path $env:TEMP 'zjc-extract') -Recurse -Force -ErrorAction SilentlyContinue
-        Write-Ok ("已下载 " + $rel.tag_name)
-        return $rel.tag_name
+        Write-Ok 'zju-connect 已安装就绪'
+        return (Get-Cfg).zjuVersion
     } catch {
-        Write-Warn2 ("自动下载失败（" + $_.Exception.Message + "）——多为当前网络到 GitHub 不通：校园网内重试会自动下载，或手动下载放入 bin\")
-        return ''
+        Write-Warn2 ("安装失败（" + $_.Exception.Message + "）——手动解压最新版 zip 放入 bin\ 亦可")
+        return (Get-Cfg).zjuVersion
     }
 }
 
