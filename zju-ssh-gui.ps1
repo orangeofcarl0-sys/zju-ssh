@@ -267,7 +267,7 @@ $xaml = @'
         <RadioButton x:Name="navSettings" Style="{StaticResource NavBtn}" GroupName="nav" Margin="0,6,0,0" Content="⚙  设置"/>
         <RadioButton x:Name="navLog" Style="{StaticResource NavBtn}" GroupName="nav" Margin="0,6,0,0" Content="▤  日志"/>
         <TextBlock Margin="14,26,0,0" Text="ZJU SSH" Foreground="#4A4A60" FontSize="10"/>
-        <TextBlock x:Name="verText" Margin="14,2,0,0" Text="v1.3.1" Foreground="#4A4A60" FontSize="10"/>
+        <TextBlock x:Name="verText" Margin="14,2,0,0" Text="v1.3.2" Foreground="#4A4A60" FontSize="10"/>
       </StackPanel>
     </Border>
 
@@ -340,15 +340,15 @@ $xaml = @'
                 <TextBox x:Name="tVpnUser" Style="{StaticResource Inp}"/>
               </StackPanel>
               <StackPanel Grid.Row="4" Grid.Column="0">
-                <TextBlock Style="{StaticResource Lbl}" Text="上网密码"/>
-                <TextBox x:Name="tVpnPass" Style="{StaticResource Inp}"/>
-              </StackPanel>
-              <StackPanel Grid.Row="4" Grid.Column="2">
                 <TextBlock Style="{StaticResource Lbl}" Text="通道模式"/>
                 <ComboBox x:Name="cmoMode" Style="{StaticResource DarkCombo}">
                     <ComboBoxItem Content="TUN（推荐，需一次管理员授权）" IsSelected="True"/>
                   <ComboBoxItem Content="SOCKS（免管理员，用 Git Bash ssh）"/>
                 </ComboBox>
+              </StackPanel>
+              <StackPanel Grid.Row="4" Grid.Column="2">
+                <TextBlock Style="{StaticResource Lbl}" Text="上网密码"/>
+                <TextBox x:Name="tVpnPass" Style="{StaticResource Inp}"/>
               </StackPanel>
               <StackPanel Grid.Row="6" Grid.Column="0" Orientation="Horizontal">
                 <CheckBox x:Name="tglAuto" Style="{StaticResource Switch}" Content="开机自动启动校外隧道（TUN）"/>
