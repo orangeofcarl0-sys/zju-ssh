@@ -8,7 +8,7 @@
 # TUN 模式（需要 root）见 README，本脚本默认 SOCKS。
 
 set -u
-TOOL_VERSION="1.3.6"
+TOOL_VERSION="1.3.7"
 TOOL_DIR="$(cd "$(dirname "$0")" && pwd)"
 BIN="$TOOL_DIR/bin"
 CFG_LOCAL="$HOME/.config/zju-ssh/config.json"

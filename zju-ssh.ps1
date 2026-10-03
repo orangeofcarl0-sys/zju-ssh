@@ -204,7 +204,7 @@ function Invoke-Init {
     Write-Host ''
     Write-Host '[init] 完成。接下来：'
     if ($Mode -eq 'tun') {
-        Write-Host "  1) 配置了上网账号的，运行 install-task（一次 UAC，开机自启隧道）"
+        Write-Host "  1) 可选：运行 install-task（一次 UAC）→ 开机自动建隧道；不注册也能用，一键连接时 UAC 授权即可"
         Write-Host "  2) 密钥: ssh-keygen -t ed25519 -C `"名字@zju`"（若未有），公钥发给管理员"
         Write-Host "  3) 任何网络下: ssh $($t.Alias)；自检: doctor"
     } else {
@@ -226,17 +226,24 @@ function Invoke-Up {
     if (-not (Test-Path $zc)) { throw ("缺少 " + $zc + " —— 自动下载失败（多为当前网络到 GitHub 不通）：回校园网重试，或手动下载放入 bin\") }
     New-Item -ItemType Directory -Force -Path $logsDir | Out-Null
     if ($cfg.mode -eq 'tun') {
-        # 任务存在性检查不要用 schtasks /query：EA=Stop 下其 stderr 会升级为终止错误（NativeCommandError），
-        # 下面的友好提示永远没机会显示；Get-ScheduledTask 无任务时安静返回 null
-        if (-not (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue)) {
-            throw 'TUN 模式需要先注册开机自启任务：点一次“开机自动启动校外隧道”开关（一次 UAC），或命令行运行 install-task'
+        # 解耦设计：连接不依赖"开机自启"注册——任务在则静默复用（无 UAC），不在则当场 UAC 拉起隧道。
+        # 需要管理员是 Windows 对 TUN 虚拟网卡的要求；"注册自启"只是可选的持久化功能，不是连接前置条件。
+        New-Item -ItemType Directory -Force -Path $logsDir | Out-Null
+        if (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue) {
+            Write-Host '[up] 通过计划任务启动 TUN 隧道...'
+            $prevEa = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+            schtasks /run /tn $taskName | Out-Null
+            $runOk = ($LASTEXITCODE -eq 0)
+            $ErrorActionPreference = $prevEa
+            if (-not $runOk) { throw '[up] 计划任务启动失败（schtasks /run）——重跑 install-task 注册或运行 doctor 排查' }
+        } else {
+            Write-Host '[up] 请求管理员权限启动隧道（UAC 弹窗请点“是”）...'
+            try {
+                Start-Process -FilePath $zc -ArgumentList (Get-ZcArgs $true) -Verb RunAs -WindowStyle Hidden
+            } catch {
+                throw '[up] 已取消管理员授权，隧道未启动（创建 TUN 虚拟网卡需要管理员权限）'
+            }
         }
-        Write-Host '[up] 通过计划任务启动 TUN 隧道...'
-        $prevEa = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
-        schtasks /run /tn $taskName | Out-Null
-        $runOk = ($LASTEXITCODE -eq 0)
-        $ErrorActionPreference = $prevEa
-        if (-not $runOk) { throw '[up] 计划任务启动失败（schtasks /run）——重跑 install-task 注册或运行 doctor 排查' }
         $deadline = (Get-Date).AddSeconds(60)
         while ((Get-Date) -lt $deadline) {
             if (Get-ZjuProc) { Write-Ok 'zju-connect 已运行（TUN）'; return }
@@ -260,8 +267,19 @@ function Invoke-Up {
 
 function Invoke-Down {
     $proc = Get-ZjuProc
-    if ($proc) { $proc | Stop-Process -Force; Write-Ok 'zju-connect 已停止' }
-    else { Write-Host '[down] zju-connect 未在运行' }
+    if ($proc) {
+        try {
+            $proc | Stop-Process -Force
+            Write-Ok 'zju-connect 已停止'
+        } catch {
+            # TUN 隧道以管理员权限运行，非提权会话停不掉：提权 taskkill（一次 UAC）
+            Write-Host '[down] 隧道以管理员权限运行，请求提权停止（UAC）...'
+            $log = Join-Path $env:TEMP 'zju-stop.log'
+            Invoke-ElevatedScript -body 'taskkill /f /im zju-connect.exe' -logFile $log | Out-Null
+            if (Get-ZjuProc) { Write-Warn2 '停止未生效——请手动结束 zju-connect.exe 后重试' }
+            else { Write-Ok 'zju-connect 已停止（提权）' }
+        }
+    } else { Write-Host '[down] zju-connect 未在运行' }
     Remove-Item (Join-Path $bin 'zju.pid') -ErrorAction SilentlyContinue
 }
 
@@ -297,7 +315,7 @@ function Invoke-Doctor {
     if ($cfg -and $cfg.mode -eq 'tun') {
         $taskOk = $false
         try { schtasks /query /tn $taskName 2>$null | Out-Null; $taskOk = ($LASTEXITCODE -eq 0) } catch { $taskOk = $false }
-        Write-Host ('[' + $(if ($taskOk) {'✓'} else {'!'}) + '] 开机自启计划任务 ' + $(if ($taskOk) {'已注册'} else {'未注册（配置上网账号后运行 install-task）'}))
+        Write-Host ('[' + $(if ($taskOk) {'✓'} else {'!'}) + '] 开机自启计划任务 ' + $(if ($taskOk) {'已注册'} else {'未注册（可选功能：注册后开机自动建隧道；不注册也能一键连接，届时 UAC 授权）'}))
     }
     $cfgText = if (Test-Path $sshConfigPath) { Get-Content $sshConfigPath -Raw } else { '' }
     Write-Host ('[' + $(if ($cfgText -and $cfgText.Contains($mBegin)) {'✓'} else {'✗'}) + '] ~/.ssh/config 含 zju 配置块')
