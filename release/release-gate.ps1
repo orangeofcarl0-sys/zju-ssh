@@ -36,7 +36,7 @@ Section '§1 质量门 · 文件齐套 / BOM / 语法 / 工作树'
 $required = @(
     'README.md', 'LICENSE', '.gitignore', '.gitattributes', 'RELEASE.md',
     'config.example.json', 'Start-GUI.bat',
-    'zju-ssh.ps1', 'zju-ssh-gui.ps1', 'zju-common.psm1', 'sshpipe.cs', 'zju-ssh.sh',
+    'zju-ssh.ps1', 'zju-ssh-gui.ps1', 'zju-common.psm1', 'zju-runner.ps1', 'sshpipe.cs', 'zju-ssh.sh',
     'monitor/ssh-log.ps1', 'smoke-test.ps1', 'tools/norm-bom.ps1',
     'release/release-gate.ps1', 'release/package.ps1', 'release/notes-template.md',
     '.github/workflows/ci.yml', '.github/workflows/release.yml'

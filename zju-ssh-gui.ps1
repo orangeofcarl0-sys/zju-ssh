@@ -265,7 +265,7 @@ $xaml = @'
         <RadioButton x:Name="navHome" Style="{StaticResource NavBtn}" GroupName="nav" IsChecked="True" Content="⌂  主页"/>
         <RadioButton x:Name="navSettings" Style="{StaticResource NavBtn}" GroupName="nav" Margin="0,6,0,0" Content="⚙  设置"/>
         <TextBlock Margin="14,26,0,0" Text="ZJU SSH" Foreground="#4A4A60" FontSize="10"/>
-        <TextBlock x:Name="verText" Margin="14,2,0,0" Text="v1.4.6" Foreground="#4A4A60" FontSize="10"/>
+        <TextBlock x:Name="verText" Margin="14,2,0,0" Text="v1.5.0" Foreground="#4A4A60" FontSize="10"/>
       </StackPanel>
     </Border>
 
@@ -304,6 +304,26 @@ $xaml = @'
               <Button x:Name="btnDoctor" Style="{StaticResource GhostBtn}" Content="自检并复制诊断信息" Width="180" Margin="0,0,12,0"/>
               <Button x:Name="btnDown" Style="{StaticResource GhostBtn}" Content="停止校外隧道" Width="150"/>
             </StackPanel>
+            <!-- 认证步骤提示：第一步图形验证码（浏览器）/ 第二步短信验证码 -->
+            <Border x:Name="challengePanel" Visibility="Collapsed" Background="#2A2233" BorderBrush="#7A5CD6"
+                    BorderThickness="1" CornerRadius="8" Padding="12" Margin="0,12,0,0">
+              <StackPanel>
+                <TextBlock x:Name="challengeText" Text="需要二次认证：请输入验证码" Foreground="#D8C7FF"
+                           FontSize="12" TextWrapping="Wrap"/>
+                <StackPanel x:Name="captchaRow" Orientation="Horizontal" Margin="0,8,0,0" Visibility="Collapsed">
+                  <Button x:Name="btnCaptcha" Style="{StaticResource AccBtn}" Content="打开验证码网页" Width="150" Height="32"/>
+                  <TextBlock x:Name="captchaUrl" Text="" Foreground="#8A8AA0" FontSize="11"
+                             VerticalAlignment="Center" Margin="10,0,0,0"/>
+                </StackPanel>
+                <StackPanel x:Name="codeRow" Orientation="Horizontal" Margin="0,8,0,0" Visibility="Collapsed">
+                  <TextBox x:Name="tCode" Width="180" Height="32" FontSize="14" FontFamily="Consolas"
+                           Background="#232333" Foreground="{StaticResource TextMain}" BorderBrush="#3A3A50"
+                           BorderThickness="1" Padding="8,5" VerticalContentAlignment="Center"/>
+                  <Button x:Name="btnCode" Style="{StaticResource AccBtn}" Content="提交验证码" Width="120" Height="32"
+                          Margin="10,0,0,0"/>
+                </StackPanel>
+              </StackPanel>
+            </Border>
             <TextBlock Text="日常连接不需要打开本窗口：任何终端 ssh zju 即可。"
                        Foreground="#66667E" FontSize="11" HorizontalAlignment="Center" Margin="0,10,0,0"/>
           </StackPanel>
@@ -413,7 +433,7 @@ if ($script:theme -eq 'light') {
 $reader = New-Object System.Xml.XmlNodeReader $xamlDoc
 $window = [Windows.Markup.XamlReader]::Load($reader)
 $ui = @{}
-foreach ($n in @('dot','pillText','heroStatus','heroSub','prog','btnConnect','tSshUser','tVpnUser','tVpnPass','cmoMode','tglAuto','btnApply','btnKey','btnDoctor','btnDown','txtLog','tSshHost','tSshPort','tAlias','tZjuServer','pageHome','pageSettings','navHome','navSettings','verText','btnTheme','homeTarget','homeAlias')) {
+foreach ($n in @('dot','pillText','heroStatus','heroSub','prog','btnConnect','tSshUser','tVpnUser','tVpnPass','cmoMode','tglAuto','btnApply','btnKey','btnDoctor','btnDown','txtLog','tSshHost','tSshPort','tAlias','tZjuServer','pageHome','pageSettings','navHome','navSettings','verText','btnTheme','homeTarget','homeAlias','challengePanel','challengeText','tCode','btnCode','captchaRow','codeRow','btnCaptcha','captchaUrl')) {
     $ui[$n] = $window.FindName($n)
 }
 $ui.btnTheme.Content = if ($script:theme -eq 'dark') { '☀' } else { '🌙' }
@@ -456,6 +476,9 @@ $script:zjuTailPos = 0
 $script:zjuTailF = ''
 $script:guiMode = ''
 $script:reallyExit = $false
+$script:challengeActive = $false
+$script:captchaUrlShown = ''
+$script:challengeShown = ''
 
 $timer = New-Object System.Windows.Threading.DispatcherTimer
 $timer.Interval = [TimeSpan]::FromMilliseconds(400)
@@ -511,35 +534,76 @@ function Read-Grow([string]$path, [ref]$pos) {
     } finally { $fs.Close() }
 }
 
+# 内核日志尾随 + 二次认证检测。
+# 关键：up 子进程运行期间也要尾随（旧实现只在无子进程时尾随，导致验证码提示永远看不到——
+# 而旧 up 又会因 Start-Process -Wait 等隧道树而长时间不返回，等于提示被彻底吞掉）。
+function Update-KernelTail {
+    $zj = Get-ZjuProc
+    if ($zj) {
+        if (-not $script:zjuWasRun) {
+            $script:zjuWasRun = $true
+            $script:zjuTailPos = 0
+            $script:zjuNoLogHinted = $false
+            $script:zjuTailF = if ($script:guiMode -eq 'tun') { Join-Path $toolDir 'logs\zju-tun.log' } else { Join-Path $toolDir 'logs\zju-out.log' }
+            Append-Log '── zju-connect 运行日志（实时跟踪） ──'
+        }
+        if ((Test-Path $script:zjuTailF) -or $script:zjuNoLogHinted) {
+            Read-Grow $script:zjuTailF ([ref]$script:zjuTailPos)
+        } elseif ($script:tick -ge 8) {
+            $script:zjuNoLogHinted = $true
+            Append-Log '（尚未发现该进程的运行日志——建议点「停止校外隧道」结束后重新一键连接，以启用当前版本的内核与日志）'
+        }
+        # 认证步骤检测：① 图形验证码（浏览器网页，先）② 短信/令牌验证码（后）
+        $cap = Get-ZjuCaptchaUrl $script:zjuTailF
+        $ch = Get-ZjuChallenge $script:zjuTailF
+        if ($cap) {
+            if ($script:captchaUrlShown -ne $cap) {
+                $script:captchaUrlShown = $cap
+                $script:challengeActive = $true
+                $ui.challengeText.Text = '第一步：图形验证码 —— 在打开的网页里按提示点选图片字符并提交'
+                $ui.captchaUrl.Text = $cap
+                $ui.captchaRow.Visibility = 'Visible'
+                $ui.codeRow.Visibility = 'Collapsed'
+                $ui.challengePanel.Visibility = 'Visible'
+                Append-Log ('★ 需要图形验证码：' + $cap + '（已自动打开浏览器；若未弹出点「打开验证码网页」）')
+            }
+        } elseif ($ch) {
+            if ($script:challengeShown -ne $ch) {
+                $script:challengeShown = $ch
+                $script:challengeActive = $true
+                $ui.challengeText.Text = '第二步：短信验证码 —— ' + $ch + '（学校已发送到你的手机/令牌，填入后提交）'
+                $ui.captchaRow.Visibility = 'Collapsed'
+                $ui.codeRow.Visibility = 'Visible'
+                $ui.challengePanel.Visibility = 'Visible'
+                $ui.tCode.Focus() | Out-Null
+                Append-Log '★ 需要短信验证码：请在下方输入框填写并提交'
+            }
+        } elseif ($script:challengeActive) {
+            $script:challengeActive = $false
+            $script:captchaUrlShown = ''
+            $script:challengeShown = ''
+            $ui.challengePanel.Visibility = 'Collapsed'
+            $ui.captchaRow.Visibility = 'Collapsed'
+            $ui.codeRow.Visibility = 'Collapsed'
+            Append-Log '✓ 二次认证已完成（内核已继续）'
+        }
+    } elseif ($script:zjuWasRun) {
+        $script:zjuWasRun = $false
+        Append-Log '■ 隧道进程已退出'
+        if ($script:challengeActive) { $script:challengeActive = $false; $ui.challengePanel.Visibility = 'Collapsed' }
+    }
+}
+
 $timer.Add_Tick({
     if (-not $script:proc) {
         $script:tick++
         if ($script:tick -ge 40) { $script:tick = 0; Update-StatusQuiet }
-        # zju-connect 运行日志实时跟踪（隧道长驻，生命周期独立于 CLI 子任务；TUN/SOCKS 均有落盘日志）
-        $zj = Get-ZjuProc
-        if ($zj) {
-            if (-not $script:zjuWasRun) {
-                $script:zjuWasRun = $true
-                $script:zjuTailPos = 0
-                $script:zjuNoLogHinted = $false
-                $script:zjuTailF = if ($script:guiMode -eq 'tun') { Join-Path $toolDir 'logs\zju-tun.log' } else { Join-Path $toolDir 'logs\zju-out.log' }
-                Append-Log '── zju-connect 运行日志（实时跟踪） ──'
-            }
-            if ((Test-Path $script:zjuTailF) -or $script:zjuNoLogHinted) {
-                Read-Grow $script:zjuTailF ([ref]$script:zjuTailPos)
-            } elseif ($script:tick -ge 8) {
-                # 进程在跑但没有它的运行日志：多半是旧计划任务/旧内核启动的残留，给一条自救指引
-                $script:zjuNoLogHinted = $true
-                Append-Log '（尚未发现该进程的运行日志——建议点「停止校外隧道」结束后重新一键连接，以启用当前版本的内核与日志）'
-            }
-        } elseif ($script:zjuWasRun) {
-            $script:zjuWasRun = $false
-            Append-Log '■ 隧道进程已退出'
-        }
+        Update-KernelTail
         return
     }
     Read-Grow $script:outF ([ref]$script:posO)
     Read-Grow $script:errF ([ref]$script:posE)
+    Update-KernelTail
     if ($script:proc.HasExited) {
         Read-Grow $script:outF ([ref]$script:posO)
         Read-Grow $script:errF ([ref]$script:posE)
@@ -611,6 +675,28 @@ $ui.btnApply.Add_Click({
 
 $ui.btnDoctor.Add_Click({ Start-Tool 'doctor' '自检' $true })
 $ui.btnDown.Add_Click({ Start-Tool 'down' '停止隧道' $false })
+
+# 二次认证口令：直接写"收件箱"（由 runner 转发给内核 stdin）。
+# 不能走 Start-Tool 子进程——up 正在运行时 GUI 有"已有任务在运行"互斥，
+# 子进程会被拒绝，导致口令永远发不出去（实测死锁）。
+function Submit-Code {
+    $c = $ui.tCode.Text.Trim()
+    if (-not $c) { Append-Log '请先填写验证码再提交'; return }
+    try {
+        $n = Send-ZjuCode -LogDir (Join-Path $toolDir 'logs') -Code $c
+        Append-Log ("★ 验证码已提交（{0} 位），等待内核校验…" -f $n)
+        $ui.tCode.Text = ''
+    } catch {
+        Append-Log ('验证码提交失败：' + $_.Exception.Message)
+    }
+}
+$ui.btnCode.Add_Click({ Submit-Code })
+$ui.tCode.Add_KeyDown({ param($s, $e) if ($e.Key -eq [System.Windows.Input.Key]::Return) { Submit-Code } })
+# 手动打开图形验证码网页（内核已尝试自动打开，浏览器被拦时可点此重开）
+$ui.btnCaptcha.Add_Click({
+    $u = $ui.captchaUrl.Text
+    if ($u) { try { Start-Process $u } catch { Append-Log ('打开浏览器失败：' + $_.Exception.Message) } }
+})
 
 $ui.btnKey.Add_Click({
     $pub = Join-Path $env:USERPROFILE '.ssh\id_ed25519.pub'

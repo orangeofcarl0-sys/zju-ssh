@@ -1,6 +1,6 @@
 # zju-ssh
 
-> v1.4.6 · [MIT License](LICENSE) · Windows GUI+CLI / macOS+Linux CLI
+> v1.5.0 · [MIT License](LICENSE) · Windows GUI+CLI / macOS+Linux CLI
 
 **ZJU SSH 助手** —— 让"任何网络下 `ssh 浙大校园网工作站`"变成一条零配置的命令。
 **整个工具围绕 [zju-connect](https://github.com/Mythologyli/zju-connect)（aTrust 协议开源客户端）构建，专为浙江大学校园网打造**：
@@ -100,7 +100,11 @@ ssh zju
 | mode | tun | tun / socks |
 | sshUser / vpnUser / vpnPassword | — | 账户与凭据（密码 DPAPI 加密存储） |
 
-**认证挑战（动态口令/短信验证码/图形码）**：内核在登录遇到二次认证时，挑战消息会实时出现在 GUI 日志中，同时任务栏会出现一个最小化的 `zju-tunnel` 控制台——点开它输入口令回车即可完成认证（GUI 日志负责"看"，控制台负责"输"）。
+**二次认证（图形码 / 动态口令 / 短信验证码）**：学校 aTrust 常要求两步认证，工具会自动引导：
+1. **图形验证码**：内核会启动本地验证码网页并自动打开浏览器，界面同时显示「打开验证码网页」按钮与地址；按网页提示点选图片字符并提交。
+2. **短信/令牌验证码**：通过后学校发短信到你的手机，界面会展开「验证码」输入框（内核提示同步显示在实时日志里），填入后点「提交验证码」（或按回车）。
+
+命令行等价操作：`zju-ssh.ps1 code <验证码>`。认证期间 `up` 会保持等待（不按 90 秒表催），内核自身的图形码超时为 5 分钟。
 
 CLI 通过 `init -SshHost -SshPort -HostAlias -Server -ZjuPort -ZjuRepo` 传参；旧配置缺字段自动回落默认值。
 
@@ -134,9 +138,10 @@ CLI 通过 `init -SshHost -SshPort -HostAlias -Server -ZjuPort -ZjuRepo` 传参�
 ## 开发
 
 ```
-zju-common.psm1   共享库（TCP 探测/连接状态/配置 DPAPI/统一输出）
-zju-ssh.ps1       CLI（init/up/down/doctor/connect/install-task/uninstall-task）
+zju-common.psm1   共享库（TCP 探测/连接状态/配置 DPAPI/统一输出/认证挑战识别）
+zju-ssh.ps1       CLI（init/up/down/doctor/connect/code/install-task/uninstall-task）
 zju-ssh-gui.ps1   WPF 图形界面（深色卡片式）
+zju-runner.ps1    隧道监督进程（持有内核 stdin，转发二次认证口令）
 zju-ssh.sh        macOS/Linux CLI v1.1（LaunchAgent/systemd 自启）
 sshpipe.cs           SOCKS 智能垫片源码（init 时以系统自带 csc 编译）
 monitor/ssh-log.ps1  工作站连接日志（含 IP 漂移巡检）

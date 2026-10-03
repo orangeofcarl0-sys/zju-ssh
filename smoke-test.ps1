@@ -67,6 +67,7 @@ Check 'bin\zju-connect.exe 存在' (Test-Path (Join-Path $toolDir 'bin\zju-conne
 #     $direct 曾在 820c137 重构时丢失，导致"全部下载源失败"提示里的手动地址恒为空——用静态检查钉死。
 $cliText = [System.IO.File]::ReadAllText((Join-Path $toolDir 'zju-ssh.ps1'))
 $shText2 = [System.IO.File]::ReadAllText((Join-Path $toolDir 'zju-ssh.sh'))
+$modText = [System.IO.File]::ReadAllText((Join-Path $toolDir 'zju-common.psm1'))
 Check 'CLI 下载链含 $direct 定义（手动地址不再为空）' ($cliText -match '\$direct\s*=\s*"https://github\.com/\$repo')
 Check 'CLI 下载链零 API 依赖（不再查 api.github.com/releases）' ($cliText -notmatch 'api\.github\.com/repos/\$repo/releases')
 Check 'CLI 下载链含 nightly 通道' ($cliText -match 'releases/download/nightly/')
@@ -75,6 +76,23 @@ Check 'sh 下载链零 API 依赖' ($shText2 -notmatch 'api\.github\.com/repos')
 Check 'sh 下载链含 nightly 通道' ($shText2 -match 'releases/download/nightly/')
 Check 'sh 下载链含镜像回退' (($shText2 -match 'ghproxy\.cn') -and ($shText2 -match 'gh-proxy\.com'))
 Check 'CLI 无重复函数定义' ([regex]::Matches($cliText, '(?m)^function Invoke-Connect').Count -eq 1)
+# 二次认证链路：模块必须导出挑战/图形码识别；up 不得再用 -Wait 等隧道进程树（那会让 GUI 永久卡在"正在连接"）
+Check '模块含挑战识别函数' ($modText -match 'function Get-ZjuChallenge')
+Check '模块含图形验证码识别函数' ($modText -match 'function Get-ZjuCaptchaUrl')
+Check 'up 不用 Start-Process -Wait 启动隧道' ($cliText -notmatch 'Start-Process -FilePath \$elCmd -Verb RunAs -Wait')
+Check 'CLI 含 code 子命令' ($cliText -match "'code'\s*\{")
+Check 'runner 存在且持有 stdin' ((Test-Path (Join-Path $toolDir 'zju-runner.ps1')) -and ((Get-Content (Join-Path $toolDir 'zju-runner.ps1') -Raw) -match 'RedirectStandardInput'))
+# 挑战识别自测：造一个"内核正等短信码"的日志，判据必须命中；已回应后必须为空
+$tmpChal = Join-Path $env:TEMP ('zju-chal-' + [guid]::NewGuid().ToString('N').Substring(0,6) + '.log')
+[System.IO.File]::WriteAllText($tmpChal, "Starting login`r`nSMS message sent successfully`r`nPlease enter the SMS verification code: ")
+Check '挑战识别：正等待时命中' ((Get-ZjuChallenge $tmpChal) -match 'SMS verification code')
+[System.IO.File]::WriteAllText($tmpChal, "Please enter the SMS verification code: KERNEL-GOT:123456`r`nVPN client started")
+Check '挑战识别：已回应后为空' ((Get-ZjuChallenge $tmpChal) -eq '')
+[System.IO.File]::WriteAllText($tmpChal, "Perform GET /passport/v1/public/checkCode`r`nCaptcha server started at http://127.0.0.1:4989`r`n")
+Check '图形码识别：等待时命中 URL' ((Get-ZjuCaptchaUrl $tmpChal) -eq 'http://127.0.0.1:4989')
+[System.IO.File]::WriteAllText($tmpChal, "Captcha server started at http://127.0.0.1:4989`r`nPhone number: 155****6693`r`nSMS message sent successfully")
+Check '图形码识别：进入短信阶段后为空' ((Get-ZjuCaptchaUrl $tmpChal) -eq '')
+Remove-Item $tmpChal -Force -ErrorAction SilentlyContinue
 # 直链与镜像拼接必须分开：统一 base+"github.com/..." 会拼出 github.com/github.com/... 恒 404（v1.4.2 起直链从未生效）
 Check 'CLI 直链未被拼成 github.com/github.com' ($cliText -notmatch 'https://github\.com/''\s*\+\s*"github\.com/')
 Check 'sh 直链未被拼成 github.com/github.com' ($shText2 -notmatch '\$\{BASE\}github\.com/')

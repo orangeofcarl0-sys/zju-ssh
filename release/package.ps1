@@ -21,7 +21,7 @@ $dirty = & git -C $repo status --porcelain
 if ($dirty) { Write-Warning '工作树不干净：打包内容=当前磁盘内容，先跑 release-gate.ps1 更稳' }
 
 $winFiles = @('README.md', 'LICENSE', 'config.example.json', 'Start-GUI.bat',
-    'zju-ssh.ps1', 'zju-ssh-gui.ps1', 'zju-common.psm1', 'sshpipe.cs', 'monitor/ssh-log.ps1')
+    'zju-ssh.ps1', 'zju-ssh-gui.ps1', 'zju-common.psm1', 'zju-runner.ps1', 'sshpipe.cs', 'monitor/ssh-log.ps1')
 $macFiles = @('README.md', 'LICENSE', 'config.example.json', 'zju-ssh.sh')
 
 if (Test-Path $OutDir) { Remove-Item $OutDir -Recurse -Force }

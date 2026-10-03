@@ -263,12 +263,31 @@ function Invoke-Init {
     }
 }
 
+# ---- 二次认证（短信/动态口令/图形码）支持 ----
+# 内核遇到挑战时从 stdin 读一行口令。旧实现靠"最小化控制台窗口"让用户自己找窗口敲码，
+# 且提权启动用 Start-Process -Wait 会等整棵进程树——只要隧道活着 up 就永不返回（GUI 卡在"正在连接"）。
+# 现改为 zju-runner.ps1 持有内核 stdin，口令经"收件箱"文件转发，界面/CLI 都能直接输入。
+# 挑战提示的识别在共享模块 Get-ZjuChallenge（CLI 与 GUI 同一判据）。
+$inboxPath = Join-Path $logsDir 'code-inbox.txt'
+$statusPath = Join-Path $logsDir 'runner.json'
+
+# 提交口令：写入收件箱，由 runner 转发给内核 stdin（实现见共享模块，GUI 复用同一路径）
+function Send-Code([string]$code) { Send-ZjuCode -LogDir $logsDir -Code $code | Out-Null }
+
 # 隧道超时时的额外指引：稳定版内核不含 ZJU 当前所需的 aTrust 二次认证修复，
 # 若用户手动切过 stable，超时最可能就是这个原因——直接点名 nightly 通道（handoff §20 遗留项）
 function Get-ChannelHint {
     $channel = Get-CfgValue -Cfg (Get-Cfg) -Key 'zjuChannel'
     if ($channel -eq 'stable') { return '；若日志显示认证挑战/协议相关失败，把配置 zjuChannel 改回 nightly（含 aTrust 二次认证修复）后删除 bin\zju-connect.exe 重连' }
     return ''
+}
+
+# 手动提交二次认证口令（GUI/CLI 通用）：zju-ssh.ps1 code <验证码>
+function Invoke-SubmitCode([string]$code) {
+    if (-not $code) { throw '用法: zju-ssh code <验证码>（也可在 GUI 的「验证码」输入框提交）' }
+    if (-not (Get-ZjuProc)) { throw '隧道未在运行——先「一键连接」，等出现验证码提示后再提交' }
+    Send-Code $code
+    Write-Ok ("验证码已提交（{0} 位），等待内核校验…" -f $code.Trim().Length)
 }
 
 function Invoke-Up {
@@ -291,11 +310,11 @@ function Invoke-Up {
         # 解耦设计：连接不依赖"开机自启"注册——任务在则静默复用（无 UAC），不在则当场 UAC 拉起隧道。
         # 需要管理员是 Windows 对 TUN 虚拟网卡的要求；"注册自启"只是可选的持久化功能，不是连接前置条件。
         $t = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
-        # 任务指向的内核路径随注册时的目录而定：换了新解压目录后旧任务会拉起旧内核（或死路径），
-        # 表现为"已在运行但永远不通"。路径不匹配时改走直接提权启动，并提示重注册。
+        # 任务注册时指向当时的 runner/内核路径：换了新解压目录后旧任务会拉起旧内核（或死路径），
+        # 表现为"已在运行但永远不通"。校验任务动作里是否含当前目录，不一致则改直接提权启动并提示重注册。
         if ($t) {
-            $tExe = [string]($t.Actions[0].Execute).Trim('"')
-            if ($tExe -ieq $zc) {
+            $tAct = ([string]$t.Actions[0].Execute + ' ' + [string]$t.Actions[0].Arguments)
+            if ($tAct -like ('*' + $toolDir + '*')) {
                 Write-Host '[up] 通过计划任务启动 TUN 隧道...'
                 $prevEa = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
                 schtasks /run /tn $taskName | Out-Null
@@ -303,29 +322,26 @@ function Invoke-Up {
                 $ErrorActionPreference = $prevEa
                 if (-not $runOk) { throw '[up] 计划任务启动失败（schtasks /run）——重跑 install-task 注册或运行 doctor 排查' }
             } else {
-                Write-Warn2 ("已注册的开机自启任务指向旧路径（" + $tExe + "）——本次改为直接提权启动；如需自启，请在当前目录重跑 install-task")
-                Start-ZjuTunElevated
+                Write-Warn2 ('已注册的开机自启任务指向其他目录（' + $tAct.Trim() + '）——本次改为直接提权启动；如需自启，请在当前目录重跑 install-task')
+                Start-ZjuTunnel -Tun $true
             }
         } else {
-            Start-ZjuTunElevated
+            Start-ZjuTunnel -Tun $true
         }
-        Write-Host '[up] 等待隧道建立（最多 60s，下方实时转发 zju-connect 日志）...'
-        if (Wait-ZjuReady { Get-ZjuProc }) { Write-Ok 'zju-connect 已运行（TUN）'; return }
+        Write-Host '[up] 等待隧道建立（最多 90s，下方实时转发 zju-connect 日志）...'
+        $logF = Get-ZjuLogFile
+        if (Wait-ZjuReady -LogFile $logF -Ready { Get-ZjuProc }) { Write-Ok 'zju-connect 已运行（TUN）'; return }
         throw ('[up] 启动超时——看上方 zju-connect 日志定位（账号/密码/验证码/协议），或运行 doctor' + (Get-ChannelHint))
     }
-    # SOCKS 也走最小化可交互控制台：认证挑战（短信/动态口令/图形码）的消息会实时进 GUI 日志，
-    # 用户点开任务栏 "zju-tunnel" 窗口输入即可；WindowStyle Hidden 的无 stdin 子进程会在挑战时挂死
-    $zcArgs = Get-ZcArgs $false
-    $outLog = Join-Path $logsDir 'zju-out.log'
-    $runCmd = Join-Path $env:TEMP ('zju-socks-' + [guid]::NewGuid().ToString('N').Substring(0, 8) + '.cmd')
-    Set-Content -Path $runCmd -Value ('"' + $zc + '" ' + ($zcArgs -join ' ') + ' > "' + $outLog + '" 2>&1' + "`r`nexit /b 0") -Encoding ASCII
-    Start-Process -FilePath $env:ComSpec -ArgumentList ('/c "' + $runCmd + '"') -WindowStyle Minimized
-    Write-Host '[up] 等待 SOCKS5 就绪（最多 60s，下方实时转发 zju-connect 日志）...'
-    if (Wait-ZjuReady { Test-SocksReady }) { Write-Ok 'SOCKS5 127.0.0.1:1080 就绪'; return }
+    # SOCKS 同样交给 runner：内核 stdin 受控，挑战口令可在界面输入（不再依赖最小化控制台窗口）
+    Start-ZjuTunnel -Tun $false
+    Write-Host '[up] 等待 SOCKS5 就绪（最多 90s，下方实时转发 zju-connect 日志）...'
+    $logF = Get-ZjuLogFile
+    if (Wait-ZjuReady -LogFile $logF -Ready { Test-SocksReady }) { Write-Ok 'SOCKS5 127.0.0.1:1080 就绪'; return }
     throw ('[up] 启动超时——看上方 zju-connect 日志定位（账号/密码/验证码/协议变更），或看 logs\zju-out.log' + (Get-ChannelHint))
 }
 
-# ---- zju-connect 运行日志（TUN=提权侧重定向；SOCKS=父进程重定向）——建立过程实时转发、事后可排障 ----
+# ---- zju-connect 运行日志（两种模式都由 runner 重定向到固定文件）----
 function Get-ZjuLogFile {
     $cfg = Get-Cfg
     if ($cfg -and $cfg.mode -eq 'tun') { return (Join-Path $logsDir 'zju-tun.log') }
@@ -340,51 +356,105 @@ function Get-ZjuLogTail {
     return ''
 }
 
-# TUN 提权启动：UAC → 最小化控制台运行 zju-connect，输出重定向到运行日志（GUI 实时跟踪 + 事后排障依据）
-function Start-ZjuTunElevated {
+# 启动隧道：写内核命令行文件 → runner 持有其 stdin（收件箱转发口令）→ 输出落日志。
+# TUN 需管理员（虚拟网卡），经 UAC 提权启动 runner；SOCKS 免提权，直接隐藏窗口启动。
+function Start-ZjuTunnel([bool]$Tun) {
     New-Item -ItemType Directory -Force -Path $logsDir | Out-Null
-    $tunLog = Join-Path $logsDir 'zju-tun.log'
-    $runCmd = Join-Path $env:TEMP ('zju-run-' + [guid]::NewGuid().ToString('N').Substring(0, 8) + '.cmd')
-    Set-Content -Path $runCmd -Value ('"' + $zc + '" ' + ((Get-ZcArgs $true) -join ' ') + ' > "' + $tunLog + '" 2>&1' + "`r`nexit /b 0") -Encoding ASCII
-    $elCmd = Join-Path $env:TEMP ('zju-elev-' + [guid]::NewGuid().ToString('N').Substring(0, 8) + '.cmd')
-    Set-Content -Path $elCmd -Value ('start "zju-tunnel" /min "' + $runCmd + '"' + "`r`nexit /b 0") -Encoding ASCII
-    Write-Host '[up] 请求管理员权限启动隧道（UAC 弹窗请点“是”）...'
-    try { Start-Process -FilePath $elCmd -Verb RunAs -Wait }
-    catch { throw '[up] 已取消管理员授权，隧道未启动（创建 TUN 虚拟网卡需要管理员权限）' }
-    Start-Sleep -Milliseconds 800   # 等提权侧把日志文件建起来
+    Remove-Item -LiteralPath $inboxPath -Force -ErrorAction SilentlyContinue   # 清空上一轮口令
+    $logF = Get-ZjuLogFile
+    $runCmd = Join-Path $env:TEMP ('zju-kernel-' + [guid]::NewGuid().ToString('N').Substring(0, 8) + '.cmd')
+    Set-Content -Path $runCmd -Value ('"' + $zc + '" ' + ((Get-ZcArgs $Tun) -join ' ')) -Encoding ASCII
+    $runner = Join-Path $toolDir 'zju-runner.ps1'
+    $rArgs = @('-NoProfile','-ExecutionPolicy','Bypass','-File',('"' + $runner + '"'),
+               '-RunCmd',('"' + $runCmd + '"'),'-Log',('"' + $logF + '"'),
+               '-Inbox',('"' + $inboxPath + '"'),'-Status',('"' + $statusPath + '"'),
+               '-Mode',$(if ($Tun) { 'tun' } else { 'socks' }))
+    if ($Tun) {
+        Write-Host '[up] 请求管理员权限启动隧道（UAC 弹窗请点“是”）...'
+        $elCmd = Join-Path $env:TEMP ('zju-elev-' + [guid]::NewGuid().ToString('N').Substring(0, 8) + '.cmd')
+        $inner = 'powershell ' + ($rArgs -join ' ')
+        Set-Content -Path $elCmd -Value ('start "zju-runner" /min ' + $inner + "`r`nexit /b 0") -Encoding ASCII
+        # 关键：用 -PassThru + WaitForExit() 只等"提权启动器"，绝不能用 -Wait
+        # （-Wait 会等整棵进程树，隧道长驻 → up 永不返回，GUI 永远卡在"正在连接"）
+        try {
+            $lp = Start-Process -FilePath $elCmd -Verb RunAs -PassThru
+            [void]$lp.WaitForExit(15000)
+        } catch { throw '[up] 已取消管理员授权，隧道未启动（创建 TUN 虚拟网卡需要管理员权限）' }
+    } else {
+        Start-Process -FilePath 'powershell' -ArgumentList $rArgs -WindowStyle Hidden
+    }
+    Start-Sleep -Milliseconds 900   # 等 runner 把日志文件与状态文件建起来
 }
 
-# 等待隧道就绪：逐秒探测，每 5s 报进度，实时转发 zju-connect 最新日志行（建立过程不再鸦雀无声）
-function Wait-ZjuReady([scriptblock]$ready) {
+# 等待隧道就绪：逐秒探测，每 5s 报进度，实时转发内核日志行；
+# 一旦检测到二次认证提示，立刻把提示顶到前台（这是"卡住"最常见的原因）。
+function Wait-ZjuReady {
+    param([string]$LogFile, [scriptblock]$Ready)
     $start = Get-Date
-    $deadline = $start.AddSeconds(60)
+    $deadline = $start.AddSeconds(90)
     $script:lastTail = ''
+    $script:challengeShown = ''
+    $script:captchaShown = ''
     while ((Get-Date) -lt $deadline) {
-        if (& $ready) { return $true }
+        if (& $Ready) { return $true }
         Start-Sleep -Seconds 1
         $el = [int]((Get-Date) - $start).TotalSeconds
-        if ($el -ge 3 -and $el % 5 -eq 0) { Write-Host ("[up] 建立中… {0}s/60s" -f $el) }
-        $tail = Get-ZjuLogTail
-        if ($tail -and $tail -ne $script:lastTail) { $script:lastTail = $tail; Write-Host ('  · ' + $tail) }
+        $tail = ''
+        if ($LogFile -and (Test-Path $LogFile)) { $tail = @(Get-Content $LogFile -Tail 1 -ErrorAction SilentlyContinue) | Select-Object -First 1 }
+        if ($tail -and $tail -ne $script:lastTail) { $script:lastTail = [string]$tail; Write-Host ('  · ' + $tail) }
+        # 第一步：图形验证码（浏览器）。内核已自动打开默认浏览器，这里把地址再明确给一次。
+        $cap = Get-ZjuCaptchaUrl $LogFile
+        if ($cap -and $cap -ne $script:captchaShown) {
+            $script:captchaShown = $cap
+            Write-Host ''
+            Write-Host '════════════════════════════════════════════════════'
+            Write-Host '  第一步：图形验证码（已在浏览器打开，若未弹出请手动访问）'
+            Write-Host ('      ' + $cap)
+            Write-Host '  在网页里按提示点选图片字符并提交；通过后才会发手机短信。'
+            Write-Host '════════════════════════════════════════════════════'
+            Write-Host ''
+        }
+        $ch = Get-ZjuChallenge $LogFile
+        if ($ch -and $ch -ne $script:challengeShown) {
+            $script:challengeShown = $ch
+            Write-Host ''
+            Write-Host '════════════════════════════════════════════════════'
+            Write-Host '  第二步：短信/令牌验证码（学校已发送到你的手机）'
+            Write-Host ('  内核提示：' + $ch)
+            Write-Host '  在界面「验证码」输入框填入后提交，或命令行执行：'
+            Write-Host '      zju-ssh.ps1 code <验证码>'
+            Write-Host '════════════════════════════════════════════════════'
+            Write-Host ''
+        }
+        # 人工认证期间不按秒表催：图形码要手点、短信要等手机，可能远超 90s。
+        # 只要有未完成的挑战/图形码，就把截止时间顺延（内核自身图形码超时 5 分钟）。
+        if ($ch -or $cap) {
+            $deadline = (Get-Date).AddSeconds(120)
+        } elseif ($el -ge 3 -and $el % 5 -eq 0) {
+            Write-Host ("[up] 建立中… {0}s/90s" -f $el)
+        }
     }
     return $false
 }
 
 function Invoke-Down {
     $proc = Get-ZjuProc
-    if ($proc) {
-        try {
-            $proc | Stop-Process -Force
-            Write-Ok 'zju-connect 已停止'
-        } catch {
-            # TUN 隧道以管理员权限运行，非提权会话停不掉：提权 taskkill（一次 UAC）
-            Write-Host '[down] 隧道以管理员权限运行，请求提权停止（UAC）...'
-            $log = Join-Path $env:TEMP 'zju-stop.log'
-            Invoke-ElevatedScript -body 'taskkill /f /im zju-connect.exe' -logFile $log | Out-Null
-            if (Get-ZjuProc) { Write-Warn2 '停止未生效——请手动结束 zju-connect.exe 后重试' }
-            else { Write-Ok 'zju-connect 已停止（提权）' }
-        }
-    } else { Write-Host '[down] zju-connect 未在运行' }
+    if (-not $proc) { Write-Host '[down] zju-connect 未在运行'; return }
+    $runner = Get-RunnerProc
+    try {
+        # 先停内核，runner 检测到内核退出会自行收尾
+        $proc | Stop-Process -Force
+        if ($runner) { $runner | Stop-Process -Force -ErrorAction SilentlyContinue }
+        Write-Ok 'zju-connect 已停止'
+    } catch {
+        # TUN 隧道以管理员权限运行，非提权会话停不掉：提权 taskkill（一次 UAC）
+        Write-Host '[down] 隧道以管理员权限运行，请求提权停止（UAC）...'
+        $log = Join-Path $env:TEMP 'zju-stop.log'
+        Invoke-ElevatedScript -body 'taskkill /f /im zju-connect.exe & taskkill /f /im powershell.exe /fi "WINDOWTITLE eq zju-runner*"' -logFile $log | Out-Null
+        if (Get-ZjuProc) { Write-Warn2 '停止未生效——请手动结束 zju-connect.exe 后重试' }
+        else { Write-Ok 'zju-connect 已停止（提权）' }
+    }
+    Remove-Item -LiteralPath $statusPath -Force -ErrorAction SilentlyContinue
 }
 
 function Invoke-Doctor {
@@ -464,13 +534,21 @@ function Invoke-ElevatedScript([string]$body, [string]$logFile) {
 function Invoke-InstallTask {
     $cfg = Get-Cfg
     if (-not $cfg -or -not $cfg.vpnPassword) { throw '先 init 配置上网账号' }
-    $zcArgs = (Get-ZcArgs $true) -join ' '
-    $tr = '\"' + $zc + '\" ' + $zcArgs
+    # 计划任务也走 runner（而非直接拉内核）：这样开机自启的隧道同样支持验证码输入
+    New-Item -ItemType Directory -Force -Path $logsDir | Out-Null
+    $kernelCmd = Join-Path $logsDir 'kernel-cmd.txt'
+    Set-Content -Path $kernelCmd -Value ('"' + $zc + '" ' + ((Get-ZcArgs $true) -join ' ')) -Encoding ASCII
+    $runner = Join-Path $toolDir 'zju-runner.ps1'
+    $inner = 'powershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "' + $runner + '"' `
+        + ' -RunCmd "' + $kernelCmd + '" -Log "' + (Join-Path $logsDir 'zju-tun.log') + '"' `
+        + ' -Inbox "' + $inboxPath + '" -Status "' + $statusPath + '" -Mode tun'
+    # schtasks /tr 内层引号需转义；整条命令作为 /tr 的值
+    $tr = $inner -replace '"', '\"'
     $body = 'schtasks /create /tn ' + $taskName + ' /tr "' + $tr + '" /sc onlogon /rl highest /f'
     $log = Join-Path $env:TEMP 'zju-task-install.log'
     $out = Invoke-ElevatedScript -body $body -logFile $log
     Write-Host ('[install-task] 提权侧输出: ' + $out.Trim())
-    if ($out -match '成功') { Write-Ok '开机自启任务已注册（登录后自动建立校外隧道）' }
+    if ($out -match '成功') { Write-Ok '开机自启任务已注册（登录后自动建立校外隧道，支持验证码输入）' }
     else { throw '注册失败，见上方提权侧输出' }
 }
 
@@ -486,8 +564,9 @@ switch ($Cmd.ToLowerInvariant()) {
     'down'           { Invoke-Down }
     'doctor'         { Invoke-Doctor }
     'connect'        { if (-not $Arg1 -or -not $Arg2) { Write-Err2 'connect 需要 <host> <port>'; exit 2 }; Invoke-Connect $Arg1 $Arg2 }
+    'code'           { Invoke-SubmitCode $Arg1 }
     'install-task'   { Invoke-InstallTask }
     'uninstall-task' { Invoke-UninstallTask }
-    default          { Write-Host "用法: zju-ssh init|up|down|doctor|connect|install-task|uninstall-task"; exit 2 }
+    default          { Write-Host "用法: zju-ssh init|up|down|doctor|connect|code <验证码>|install-task|uninstall-task"; exit 2 }
 }
 exit 0
