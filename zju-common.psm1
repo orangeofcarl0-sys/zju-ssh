@@ -3,7 +3,7 @@
 # schemaVersion=2：工作站地址/端口/别名/RVPN 服务器等全部可配，缺失字段回落默认值，
 # 因此 v1 老配置无需迁移即可用。
 
-$script:ToolVersion = '1.3.3'
+$script:ToolVersion = '1.3.4'
 
 function Get-ToolVersion { return $script:ToolVersion }
 

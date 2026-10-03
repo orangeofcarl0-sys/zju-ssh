@@ -24,6 +24,8 @@ param(
 $script:VpnUserPassed = $PSBoundParameters.ContainsKey('VpnUser')
 
 $ErrorActionPreference = 'Stop'
+# 输出统一 UTF-8：GUI 以重定向方式读取子进程输出，默认 GBK 代码页会把 ✓/✗ 等字符吞成 ?
+try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch { }
 $toolDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 Import-Module (Join-Path $toolDir 'zju-common.psm1') -Force -DisableNameChecking
 
@@ -255,7 +257,8 @@ function Invoke-Down {
 }
 
 function Invoke-Doctor {
-    Write-Host ('=== zju-ssh doctor v' + $script:ToolVersion + ' ===')
+    # 版本号必须经模块函数取（$script:ToolVersion 在脚本作用域不可见，直接引用恒为空）
+    Write-Host ('=== zju-ssh doctor v' + (Get-ToolVersion) + ' ===')
     $cfg = Get-Cfg
     $t = Resolve-Targets
     if ($cfg) { Write-Ok ("配置: " + $(if (Test-Path $cfgLocal) { $cfgLocal } else { $cfgTool }) + "  模式: " + $cfg.mode + "  schema: v" + $cfg.schemaVersion) }

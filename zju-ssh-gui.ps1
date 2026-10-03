@@ -14,7 +14,6 @@ Import-Module (Join-Path $toolDir 'zju-common.psm1') -Force -DisableNameChecking
 $mainPs1 = Join-Path $toolDir 'zju-ssh.ps1'
 $cfgLocal = Join-Path $env:LOCALAPPDATA 'zju-ssh\config.json'
 $cfgTool = Join-Path $toolDir 'config.json'
-$encGbk = [System.Text.Encoding]::GetEncoding(936)
 $taskTun = 'ZJUSSH-Tunnel'
 
 $cfg0 = Get-ToolConfig -LocalPath $cfgLocal -ToolPath $cfgTool
@@ -267,7 +266,7 @@ $xaml = @'
         <RadioButton x:Name="navSettings" Style="{StaticResource NavBtn}" GroupName="nav" Margin="0,6,0,0" Content="⚙  设置"/>
         <RadioButton x:Name="navLog" Style="{StaticResource NavBtn}" GroupName="nav" Margin="0,6,0,0" Content="▤  日志"/>
         <TextBlock Margin="14,26,0,0" Text="ZJU SSH" Foreground="#4A4A60" FontSize="10"/>
-        <TextBlock x:Name="verText" Margin="14,2,0,0" Text="v1.3.3" Foreground="#4A4A60" FontSize="10"/>
+        <TextBlock x:Name="verText" Margin="14,2,0,0" Text="v1.3.4" Foreground="#4A4A60" FontSize="10"/>
       </StackPanel>
     </Border>
 
@@ -502,7 +501,7 @@ function Read-Grow([string]$path, [ref]$pos) {
     $fs = [System.IO.File]::Open($path, 'Open', 'Read', 'ReadWrite')
     try {
         $fs.Position = $pos.Value
-        $sr = New-Object System.IO.StreamReader($fs, $encGbk)
+        $sr = New-Object System.IO.StreamReader($fs, [System.Text.Encoding]::UTF8)
         $chunk = $sr.ReadToEnd()
         $pos.Value = [int]$fs.Position
         if ($chunk) { Append-Log $chunk.TrimEnd() }
@@ -520,6 +519,7 @@ $timer.Add_Tick({
     if ($script:proc.HasExited) {
         Read-Grow $script:outF ([ref]$script:posO)
         Read-Grow $script:errF ([ref]$script:posE)
+        # 先取一次 Handle：进程退出后 ExitCode 只有在句柄已打开时才可读，否则恒为空
         $code = $script:proc.ExitCode
         $timer.Stop()
         $script:proc = $null
@@ -547,6 +547,8 @@ function Start-Tool([string]$argline, [string]$title, [bool]$copyOnDone) {
     $script:posO = 0; $script:posE = 0
     $script:proc = Start-Process powershell -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-File',('"' + $mainPs1 + '"'),$argline) `
         -RedirectStandardOutput $script:outF -RedirectStandardError $script:errF -PassThru -WindowStyle Hidden
+    # 立即开句柄：若子进程在首个 tick 前就退出，未开过句柄的 ExitCode 读取会失败（此前"退出码 "为空的根因）
+    $null = $script:proc.Handle
     Set-Busy $true $title
     $timer.Start()
 }
